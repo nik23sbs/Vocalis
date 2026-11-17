@@ -15,12 +15,15 @@ component () {   # nome  sorgente  destinazione  [script]
   cp -R "$src" "$root$dest/"
   # i bundle non devono essere "spostati" dall'Installer se ne esiste una copia altrove
   pkgbuild --analyze --root "$root" "$WORK/$name.plist"
-  plutil -replace BundleIsRelocatable -bool NO "$WORK/$name.plist" 2>/dev/null || \
-    /usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$WORK/$name.plist"
-  local extra=()
-  [ -n "$scripts" ] && extra=(--scripts "$scripts")
-  pkgbuild --root "$root" --component-plist "$WORK/$name.plist" --identifier "com.vocalis.$name" \
-           --version "$VERSION" --install-location / "${extra[@]}" "$WORK/$name.pkg"
+  /usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$WORK/$name.plist"
+  # (bash 3.2 di macOS: niente array vuoti con set -u)
+  if [ -n "$scripts" ]; then
+    pkgbuild --root "$root" --component-plist "$WORK/$name.plist" --identifier "com.vocalis.$name" \
+             --version "$VERSION" --install-location / --scripts "$scripts" "$WORK/$name.pkg"
+  else
+    pkgbuild --root "$root" --component-plist "$WORK/$name.plist" --identifier "com.vocalis.$name" \
+             --version "$VERSION" --install-location / "$WORK/$name.pkg"
+  fi
 }
 
 component vst3 "$ART/VST3/Vocalis.vst3"         /Library/Audio/Plug-Ins/VST3
