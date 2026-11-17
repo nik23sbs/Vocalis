@@ -57,6 +57,13 @@ jobs:
       - name: Crea installer .pkg
         run: ./installer/make_pkg.sh build/Vocalis_artefacts/Release
 
+      - name: Prova installazione del .pkg
+        run: |
+          pkgutil --payload-files dist/*.pkg | grep -E "Vocalis\.(vst3|component|app)$"
+          sudo installer -pkg dist/*.pkg -target /
+          ls -d /Library/Audio/Plug-Ins/VST3/Vocalis.vst3 /Library/Audio/Plug-Ins/Components/Vocalis.component /Applications/Vocalis.app
+          ls /Library/Audio/Plug-Ins/Components/Vocalis.component/Contents/Resources/espeak-ng-data/phontab
+
       - uses: actions/upload-artifact@v4
         with:
           name: Vocalis-macOS
