@@ -14,8 +14,18 @@ component () {   # nome  sorgente  destinazione  [script]
   mkdir -p "$root$dest"
   cp -R "$src" "$root$dest/"
   # i bundle non devono essere "spostati" dall'Installer se ne esiste una copia altrove
-  pkgbuild --analyze --root "$root" "$WORK/$name.plist"
-  /usr/libexec/PlistBuddy -c "Set :0:BundleIsRelocatable false" "$WORK/$name.plist"
+  local rel="${dest#/}/$(basename "$src")"
+  cat > "$WORK/$name.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><array><dict>
+  <key>BundleHasStrictIdentifier</key><false/>
+  <key>BundleIsRelocatable</key><false/>
+  <key>BundleIsVersionChecked</key><false/>
+  <key>BundleOverwriteAction</key><string>upgrade</string>
+  <key>RootRelativeBundlePath</key><string>$rel</string>
+</dict></array></plist>
+PLIST
   # (bash 3.2 di macOS: niente array vuoti con set -u)
   if [ -n "$scripts" ]; then
     pkgbuild --root "$root" --component-plist "$WORK/$name.plist" --identifier "com.vocalis.$name" \
