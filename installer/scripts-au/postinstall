@@ -1,0 +1,4 @@
+#!/bin/bash
+# Aggiorna la cache delle Audio Unit cosi' le DAW vedono subito Vocalis
+killall -9 AudioComponentRegistrar 2>/dev/null || true
+exit 0

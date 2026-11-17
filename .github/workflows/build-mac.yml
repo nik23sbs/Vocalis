@@ -1,0 +1,63 @@
+name: Build macOS
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  mac:
+    runs-on: macos-14
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dipendenze (JUCE + eSpeak-NG)
+        run: ./scripts/setup_deps.sh
+
+      - name: Configura (universale arm64 + x86_64)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVOCALIS_BUILD_TESTS=ON
+
+      - name: Compila
+        run: cmake --build build --target Vocalis_VST3 Vocalis_AU Vocalis_Standalone VocalisHostTest -j "$(sysctl -n hw.ncpu)"
+
+      - name: Verifica architetture
+        run: |
+          lipo -info build/Vocalis_artefacts/Release/VST3/Vocalis.vst3/Contents/MacOS/Vocalis
+          lipo -info build/Vocalis_artefacts/Release/AU/Vocalis.component/Contents/MacOS/Vocalis
+          ls build/Vocalis_artefacts/Release/AU/Vocalis.component/Contents/Resources/espeak-ng-data | head
+
+      - name: Test (DAW simulata)
+        run: |
+          mkdir -p /tmp/out
+          VOCALIS_ESPEAK_DATA="$PWD/build/third_party/espeak-ng" ./build/VocalisHostTest_artefacts/Release/VocalisHostTest
+
+      - name: Firma ad-hoc
+        run: |
+          for b in VST3/Vocalis.vst3 AU/Vocalis.component Standalone/Vocalis.app; do
+            codesign --force --deep -s - "build/Vocalis_artefacts/Release/$b"
+          done
+
+      - name: Validazione Audio Unit (auval)
+        run: |
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R build/Vocalis_artefacts/Release/AU/Vocalis.component ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          sleep 3
+          auval -a | grep -i vocalis || true
+          auval -strict -v aumu Vcl1 Vcls
+
+      - name: Validazione VST3 (pluginval)
+        run: |
+          curl -sL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+          unzip -q pluginval.zip
+          ./pluginval.app/Contents/MacOS/pluginval --strictness-level 5 --validate-in-process --skip-gui-tests \
+            --validate build/Vocalis_artefacts/Release/VST3/Vocalis.vst3
+
+      - name: Crea installer .pkg
+        run: ./installer/make_pkg.sh build/Vocalis_artefacts/Release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Vocalis-macOS
+          path: dist/*.pkg

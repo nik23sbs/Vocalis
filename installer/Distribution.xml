@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Vocalis @VERSION@</title>
+    <welcome file="welcome.html" mime-type="text/html"/>
+    <conclusion file="conclusion.html" mime-type="text/html"/>
+    <options customize="allow" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <domains enable_localSystem="true"/>
+
+    <choices-outline>
+        <line choice="vst3"/>
+        <line choice="au"/>
+        <line choice="app"/>
+    </choices-outline>
+
+    <choice id="vst3" title="Plugin VST3" description="Per Ableton Live, Cubase, Bitwig, Studio One, Reaper...">
+        <pkg-ref id="com.vocalis.vst3"/>
+    </choice>
+    <choice id="au" title="Plugin Audio Unit (AU)" description="Per Logic Pro, GarageBand, Ableton Live...">
+        <pkg-ref id="com.vocalis.au"/>
+    </choice>
+    <choice id="app" title="App standalone" description="Vocalis come applicazione autonoma, senza DAW.">
+        <pkg-ref id="com.vocalis.app"/>
+    </choice>
+
+    <pkg-ref id="com.vocalis.vst3" version="@VERSION@">vst3.pkg</pkg-ref>
+    <pkg-ref id="com.vocalis.au" version="@VERSION@">au.pkg</pkg-ref>
+    <pkg-ref id="com.vocalis.app" version="@VERSION@">app.pkg</pkg-ref>
+</installer-gui-script>
