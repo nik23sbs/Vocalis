@@ -10,6 +10,69 @@
 
 namespace vocalis
 {
+#if VOCALIS_HAS_ORT
+/** Carica la libreria ONNX Runtime una sola volta e inizializza l'API C++ (ORT_API_MANUAL_INIT). */
+static bool loadOrt (juce::String& error)
+{
+    static std::mutex m;
+    static bool done = false, ok = false;
+    static juce::String err;
+    static juce::DynamicLibrary lib;
+
+    std::lock_guard<std::mutex> l (m);
+    if (done) { error = err; return ok; }
+    done = true;
+
+    juce::Array<juce::File> candidates;
+    if (auto env = juce::SystemStats::getEnvironmentVariable ("VOCALIS_ORT_LIB", {}); env.isNotEmpty())
+        candidates.add (juce::File (env));
+
+    const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
+    for (auto dir : { exe.getParentDirectory().getParentDirectory().getChildFile ("Frameworks"),
+                      exe.getParentDirectory(),
+                      juce::File ("/Library/Application Support/Vocalis/lib") })
+    {
+       #if JUCE_MAC
+        for (auto f : dir.findChildFiles (juce::File::findFiles, false, "libonnxruntime*.dylib"))
+       #elif JUCE_WINDOWS
+        for (auto f : dir.findChildFiles (juce::File::findFiles, false, "onnxruntime.dll"))
+       #else
+        for (auto f : dir.findChildFiles (juce::File::findFiles, false, "libonnxruntime.so*"))
+       #endif
+            if (! f.getFileName().contains ("providers"))
+                candidates.add (f);
+    }
+
+    for (auto& f : candidates)
+    {
+        if (! lib.open (f.getFullPathName()))
+            continue;
+        using GetApiBase = const OrtApiBase* (ORT_API_CALL*) ();
+        auto fn = (GetApiBase) lib.getFunction ("OrtGetApiBase");
+        const OrtApi* api = fn != nullptr ? fn()->GetApi (ORT_API_VERSION) : nullptr;
+        if (api == nullptr)
+        {
+            lib.close();
+            continue;
+        }
+        Ort::InitApi (api);
+        ok = true;
+        return true;
+    }
+
+   #if JUCE_MAC && JUCE_INTEL
+    err = "la voce neurale richiede un Mac con Apple Silicon";
+   #else
+    err = "libreria ONNX Runtime non trovata";
+   #endif
+    error = err;
+    return false;
+}
+#endif
+}
+
+namespace vocalis
+{
 
 namespace
 {
@@ -112,6 +175,12 @@ bool KokoroEngine::isAvailable (juce::String* reason)
         if (reason) *reason = "modello neurale non trovato (reinstalla Vocalis)";
         return false;
     }
+    juce::String err;
+    if (! loadOrt (err))
+    {
+        if (reason) *reason = err;
+        return false;
+    }
     return true;
    #endif
 }
@@ -131,6 +200,11 @@ SynthResult KokoroEngine::synthesize (const juce::String& text, const VoiceSetti
     if (dir == juce::File())
     {
         result.error = "Modello neurale non trovato";
+        return result;
+    }
+    if (juce::String err; ! loadOrt (err))
+    {
+        result.error = err;
         return result;
     }
     auto& m = shared();

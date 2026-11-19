@@ -64,7 +64,7 @@ jobs:
         run: |
           ./scripts/setup_deps.sh
           ./scripts/fetch_neural.sh neural
-          lipo -info neural/ort/lib/libonnxruntime.*.dylib
+          lipo -info neural/ort/lib/libonnxruntime.*.dylib || true
 
       - name: Configura (universale arm64 + x86_64)
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVOCALIS_BUILD_TESTS=ON -DVOCALIS_ORT_DIR="$PWD/neural/ort"
@@ -77,7 +77,7 @@ jobs:
           lipo -info build/Vocalis_artefacts/Release/VST3/Vocalis.vst3/Contents/MacOS/Vocalis
           lipo -info build/Vocalis_artefacts/Release/AU/Vocalis.component/Contents/MacOS/Vocalis
           ls build/Vocalis_artefacts/Release/AU/Vocalis.component/Contents/Frameworks
-          otool -L build/Vocalis_artefacts/Release/AU/Vocalis.component/Contents/MacOS/Vocalis | grep -i onnx
+          lipo -info build/Vocalis_artefacts/Release/AU/Vocalis.component/Contents/Frameworks/libonnxruntime*.dylib
 
       - name: Test (DAW simulata + voce neurale)
         env:

@@ -5,18 +5,25 @@ set -e
 DEST="${1:-neural}"
 mkdir -p "$DEST/models"
 case "$(uname -s)" in
-  Darwin) PLAT=osx-universal2 ;;
-  Linux)  PLAT=linux-x64 ;;
+  Darwin) PLATS="osx-universal2 osx-arm64" ;;
+  Linux)  PLATS="linux-x64" ;;
 esac
 if [ ! -d "$DEST/ort" ]; then
-  for V in 1.23.2 1.23.1 1.23.0 1.22.1 1.22.0; do
-    F=onnxruntime-$PLAT-$V.tgz
-    if curl -fsSL -o "$DEST/$F" "https://github.com/microsoft/onnxruntime/releases/download/v$V/$F"; then
-      tar xzf "$DEST/$F" -C "$DEST" && rm "$DEST/$F"
-      mv "$DEST/onnxruntime-$PLAT-$V" "$DEST/ort"
-      echo "ONNX Runtime $V ($PLAT)"
-      break
-    fi
+  # versione piu' recente disponibile; su macOS preferisce l'universale (Intel + Apple Silicon) se esiste
+  TAGS=$(curl -fsSL "https://api.github.com/repos/microsoft/onnxruntime/releases?per_page=30" \
+         | grep -Eo '"tag_name": *"v1\.[0-9]+\.[0-9]+"' | grep -Eo 'v1\.[0-9]+\.[0-9]+' || true)
+  [ -n "$TAGS" ] || TAGS="v1.32.0 v1.31.0 v1.30.1 v1.30.0"
+  for T in $TAGS; do
+    V=${T#v}
+    for PLAT in $PLATS; do
+      F=onnxruntime-$PLAT-$V.tgz
+      if curl -fsSL -o "$DEST/$F" "https://github.com/microsoft/onnxruntime/releases/download/$T/$F"; then
+        tar xzf "$DEST/$F" -C "$DEST" && rm "$DEST/$F"
+        mv "$DEST/onnxruntime-$PLAT-$V" "$DEST/ort"
+        echo "ONNX Runtime $V ($PLAT)"
+        break 2
+      fi
+    done
   done
 fi
 test -f "$DEST/ort/include/onnxruntime_cxx_api.h" || { echo "ONNX Runtime non scaricato"; exit 1; }
