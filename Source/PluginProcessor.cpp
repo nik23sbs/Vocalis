@@ -760,6 +760,9 @@ void VocalisProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::Mid
     displayPos = shownPos;
 
     effects.process (buffer, readEffects(), bpm);
+    float pk = 0.0f;
+    for (int ch = 0; ch < buffer.getNumChannels(); ++ch) pk = juce::jmax (pk, buffer.getMagnitude (ch, 0, n));
+    outPeak = pk;
 }
 
 // ============================================================================ Export

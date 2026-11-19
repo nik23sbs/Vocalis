@@ -13,15 +13,16 @@ VocalisLookAndFeel::VocalisLookAndFeel()
     setColour (juce::Slider::trackColourId, Colours::accent);
     setColour (juce::Slider::backgroundColourId, Colours::panelEdge);
     setColour (juce::Slider::thumbColourId, Colours::text);
-    setColour (juce::TextEditor::backgroundColourId, juce::Colour (0xff0e0f13));
+    setColour (juce::TextEditor::backgroundColourId, Colours::panel);
     setColour (juce::TextEditor::textColourId, Colours::text);
     setColour (juce::TextEditor::outlineColourId, Colours::panelEdge);
     setColour (juce::TextEditor::focusedOutlineColourId, Colours::accent);
     setColour (juce::TextEditor::highlightColourId, Colours::accent.withAlpha (0.4f));
     setColour (juce::CaretComponent::caretColourId, Colours::accent2);
-    setColour (juce::ComboBox::backgroundColourId, juce::Colour (0xff0e0f13));
+    setColour (juce::Slider::rotarySliderFillColourId, Colours::accent);
+    setColour (juce::ComboBox::backgroundColourId, Colours::card);
     setColour (juce::ComboBox::textColourId, Colours::text);
-    setColour (juce::ComboBox::outlineColourId, Colours::panelEdge);
+    setColour (juce::ComboBox::outlineColourId, Colours::edge2);
     setColour (juce::ComboBox::arrowColourId, Colours::textDim);
     setColour (juce::PopupMenu::backgroundColourId, Colours::panel);
     setColour (juce::PopupMenu::textColourId, Colours::text);
@@ -36,34 +37,35 @@ VocalisLookAndFeel::VocalisLookAndFeel()
 void VocalisLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int w, int h, float pos,
                                            float startAngle, float endAngle, juce::Slider& s)
 {
-    auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (4.0f);
+    // stile "Studio": anello spesso con il colore della manopola, punto sull'estremo
+    auto bounds = juce::Rectangle<float> ((float) x, (float) y, (float) w, (float) h).reduced (3.0f);
     const float radius = juce::jmin (bounds.getWidth(), bounds.getHeight()) / 2.0f;
     const auto centre = bounds.getCentre();
-    const float lineW = juce::jmax (2.5f, radius * 0.16f);
+    const float lineW = juce::jmax (3.0f, radius * 0.22f);
     const float arcR = radius - lineW * 0.5f;
     const float angle = startAngle + pos * (endAngle - startAngle);
-    const bool enabled = s.isEnabled();
+    const auto colour = s.isEnabled() ? s.findColour (juce::Slider::rotarySliderFillColourId) : Colours::textDim;
 
     juce::Path bgArc;
     bgArc.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, startAngle, endAngle, true);
-    g.setColour (Colours::panelEdge);
+    g.setColour (juce::Colour (0xff2a2d3a));
     g.strokePath (bgArc, juce::PathStrokeType (lineW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
     juce::Path valArc;
     valArc.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, startAngle, angle, true);
-    juce::ColourGradient grad (Colours::accent, centre.x - radius, centre.y, Colours::accent2, centre.x + radius, centre.y, false);
-    g.setGradientFill (grad);
-    if (! enabled) g.setColour (Colours::textDim);
+    g.setColour (colour);
     g.strokePath (valArc, juce::PathStrokeType (lineW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    const float knobR = arcR - lineW * 1.2f;
-    g.setColour (juce::Colour (0xff23262f));
-    g.fillEllipse (centre.x - knobR, centre.y - knobR, knobR * 2, knobR * 2);
+    const auto tip = centre.getPointOnCircumference (arcR, angle);
+    g.setColour (Colours::text);
+    g.fillEllipse (tip.x - lineW * 0.32f, tip.y - lineW * 0.32f, lineW * 0.64f, lineW * 0.64f);
 
-    juce::Path pointer;
-    pointer.addRoundedRectangle (-1.5f, -knobR + 3.0f, 3.0f, knobR * 0.45f, 1.5f);
-    g.setColour (enabled ? Colours::text : Colours::textDim);
-    g.fillPath (pointer, juce::AffineTransform::rotation (angle).translated (centre));
+    if (s.isMouseOverOrDragging())
+    {
+        g.setColour (Colours::text);
+        g.setFont (juce::FontOptions (juce::jmax (9.0f, radius * 0.42f), juce::Font::bold));
+        g.drawText (s.getTextFromValue (s.getValue()), bounds, juce::Justification::centred);
+    }
 }
 
 void VocalisLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&, bool over, bool down)

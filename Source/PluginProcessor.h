@@ -146,6 +146,9 @@ public:
     void stopPreview();
     bool isPreviewing() const { return voicePos.load() >= 0; }
 
+    /** Picco dell'uscita dell'ultimo blocco (per l'indicatore di livello). */
+    float getOutputPeak() const { return outPeak.load(); }
+
     /** Posizione di riproduzione corrente in campioni della clip (-1 = ferma). */
     double getPlayPosition() const { return displayPos.load(); }
 
@@ -196,6 +199,7 @@ private:
     std::atomic<int> voicePos { -1 };          // posizione del trigger MIDI / anteprima
     std::atomic<bool> previewRequest { false }, stopRequest { false };
     std::atomic<double> displayPos { -1.0 };
+    std::atomic<float> outPeak { 0.0f };
     float voiceGain = 1.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VocalisProcessor)

@@ -119,7 +119,9 @@ target_sources(Vocalis PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/UI/VocalisLookAndFeel.cpp
-    Source/UI/SyllableEditor.cpp
+    Source/UI/Widgets.cpp
+    Source/UI/Timeline.cpp
+    Source/UI/Inspector.cpp
     Source/UI/GrooveView.cpp)
 
 vocalis_link_core(Vocalis)

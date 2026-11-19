@@ -6,14 +6,22 @@ namespace vocalis
 
 namespace Colours
 {
-    const juce::Colour bg        { 0xff121318 };
-    const juce::Colour panel     { 0xff1b1d24 };
-    const juce::Colour panelEdge { 0xff2a2d38 };
-    const juce::Colour text      { 0xffe6e7ec };
-    const juce::Colour textDim   { 0xff8b8f9c };
-    const juce::Colour accent    { 0xff7c5cff };   // viola
-    const juce::Colour accent2   { 0xff22d3ee };   // ciano
-    const juce::Colour warn      { 0xfff59e0b };
+    // tema "Studio" (opzione A)
+    const juce::Colour bg        { 0xff0d0e13 };
+    const juce::Colour side      { 0xff101118 };
+    const juce::Colour header    { 0xff12131a };
+    const juce::Colour panel     { 0xff151722 };
+    const juce::Colour card      { 0xff171923 };
+    const juce::Colour cardHi    { 0xff1d1f2a };
+    const juce::Colour panelEdge { 0xff22242e };
+    const juce::Colour edge2     { 0xff2c2f3d };
+    const juce::Colour text      { 0xffe8e9ef };
+    const juce::Colour textDim   { 0xff9a9db0 };
+    const juce::Colour accent    { 0xffa78bfa };   // viola
+    const juce::Colour accent2   { 0xff38bdf8 };   // ciano
+    const juce::Colour pink      { 0xfff472b6 };
+    const juce::Colour warn      { 0xfffbbf24 };   // ambra (modifiche)
+    const juce::Colour ok        { 0xff8fd3a8 };
 }
 
 class VocalisLookAndFeel : public juce::LookAndFeel_V4

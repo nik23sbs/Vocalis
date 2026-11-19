@@ -2,186 +2,103 @@
 
 using namespace vocalis;
 
-// ============================================================================ Helper
-
-VocalisEditor::Knob* VocalisEditor::makeKnob (const char* id, const juce::String& label, const juce::String& suffix, int decimals)
-{
-    auto* k = knobs.add (new Knob());
-    k->label.setText (label, juce::dontSendNotification);
-    k->label.setJustificationType (juce::Justification::centred);
-    k->label.setFont (juce::FontOptions (11.5f, juce::Font::bold));
-    k->label.setColour (juce::Label::textColourId, Colours::textDim);
-    addAndMakeVisible (k->slider);
-    addAndMakeVisible (k->label);
-    k->slider.setPopupDisplayEnabled (true, false, this);
-    k->att = std::make_unique<SliderAtt> (proc.apvts, id, k->slider);
-    // testo del valore: decimali e unita' coerenti (dopo l'attachment, che altrimenti usa il testo del parametro)
-    k->slider.textFromValueFunction = [decimals] (double v) { return decimals > 0 ? juce::String (v, decimals) : juce::String (juce::roundToInt (v)); };
-    k->slider.setTextValueSuffix (suffix);
-    k->slider.valueFromTextFunction = [] (const juce::String& t) { return t.retainCharacters ("-0123456789.").getDoubleValue(); };
-    k->slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 70, 15); // ricrea la casella con il look&feel del plugin
-    return k;
-}
-
-VocalisEditor::Combo* VocalisEditor::makeCombo (const char* id, const juce::String& label)
-{
-    auto* c = combos.add (new Combo());
-    if (auto* p = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter (id)))
-        c->box.addItemList (p->choices, 1);
-    c->label.setText (label, juce::dontSendNotification);
-    c->label.setFont (juce::FontOptions (11.5f, juce::Font::bold));
-    c->label.setColour (juce::Label::textColourId, Colours::textDim);
-    addAndMakeVisible (c->box);
-    addAndMakeVisible (c->label);
-    c->att = std::make_unique<ComboAtt> (proc.apvts, id, c->box);
-    return c;
-}
-
-juce::ToggleButton* VocalisEditor::makeToggle (const char* id, const juce::String& label)
-{
-    auto* t = toggles.add (new juce::ToggleButton (label));
-    addAndMakeVisible (t);
-    toggleAtts.add (new ButtonAtt (proc.apvts, id, *t));
-    return t;
-}
-
-VocalisEditor::FxRow* VocalisEditor::makeFx (const char* onId, const juce::String& name, std::initializer_list<Knob*> ks)
-{
-    auto* row = fxRows.add (new FxRow());
-    row->toggle.setButtonText (name);
-    addAndMakeVisible (row->toggle);
-    row->att = std::make_unique<ButtonAtt> (proc.apvts, onId, row->toggle);
-    for (auto* k : ks)
-    {
-        k->slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        row->knobs.add (k);
-    }
-    return row;
-}
-
-// ============================================================================ Costruzione
-
 VocalisEditor::VocalisEditor (VocalisProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), grooveView (p), waveform (p), dragHandle (p)
+    : AudioProcessorEditor (&p), proc (p),
+      modeSwitch (*p.apvts.getParameter (IDs::mode), { "Parlato", "Rap", "Canto" }),
+      dragHandle (p), orb (p.apvts),
+      engineSwitch (*p.apvts.getParameter (IDs::engine), { "Neurale", "Robot" }),
+      robotTimbre (p.apvts, IDs::robotVariant, "Timbro robot"),
+      language (p.apvts, IDs::language, {}),
+      timeline (p), inspector (p)
 {
     setLookAndFeel (&lnf);
 
-    for (auto* panel : { &textPanel, &voicePanel, &rhythmPanel, &playPanel, &fxPanel })
-        addAndMakeVisible (panel);
+    // ---- barra superiore
+    modeSwitch.onChange = [this] (int) { inspector.refresh(); timeline.repaint(); };
+    addAndMakeVisible (modeSwitch);
+    playButton.setTooltip ("Anteprima (in Sync DAW il vocal suona con il trasporto)");
+    playButton.onClick = [this] { proc.isPreviewing() ? proc.stopPreview() : proc.startPreview(); };
+    addAndMakeVisible (playButton);
+    for (auto* l : { &positionLabel, &tempoLabel, &statusLabel })
+    {
+        l->setFont (juce::FontOptions (13.0f));
+        l->setColour (juce::Label::textColourId, Colours::textDim);
+        addAndMakeVisible (l);
+    }
+    positionLabel.setColour (juce::Label::textColourId, Colours::text);
+    positionLabel.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+    statusLabel.setJustificationType (juce::Justification::centredRight);
+    statusLabel.setFont (juce::FontOptions (12.0f));
+    exportButton.setTooltip ("Salva il vocal con gli effetti in un file WAV 24 bit");
+    exportButton.onClick = [this] { exportWav(); };
+    addAndMakeVisible (exportButton);
+    addAndMakeVisible (dragHandle);
 
-    // ---- Testo
+    // ---- colonna voci
+    const char* ids[] = { IDs::voiceA, IDs::voiceB, IDs::voiceC, IDs::voiceD };
+    const juce::Colour c1[] = { Colours::pink, Colours::accent2, Colours::warn, juce::Colour (0xff34d399) };
+    const juce::Colour c2[] = { Colours::accent, juce::Colour (0xff6366f1), juce::Colour (0xfff97316), juce::Colour (0xff14b8a6) };
+    for (int i = 0; i < 4; ++i)
+        addAndMakeVisible (cards.add (new VoiceCard (p.apvts, ids[i], juce::String::charToString ((juce::juce_wchar) ('A' + i)), c1[i], c2[i])));
+    orb.setTooltip ("Trascina il punto per miscelare le quattro voci agli angoli");
+    addAndMakeVisible (orb);
+    mixInfo.setFont (juce::FontOptions (12.0f));
+    mixInfo.setColour (juce::Label::textColourId, Colours::textDim);
+    addAndMakeVisible (mixInfo);
+    variant.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 40, 26);
+    variant.setTooltip ("Variante: un'altra interpretazione della stessa frase (stessi tempi, prosodia diversa)");
+    variantAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (p.apvts, IDs::variant, variant);
+    addAndMakeVisible (variant);
+    newVariant.setTooltip ("Prova un'interpretazione nuova a caso");
+    newVariant.onClick = [this] {
+        if (auto* v = proc.apvts.getParameter (IDs::variant))
+            v->setValueNotifyingHost (v->convertTo0to1 ((float) juce::Random::getSystemRandom().nextInt (25))); };
+    addAndMakeVisible (newVariant);
+    engineSwitch.onChange = [this] (int e) { robotTimbre.setVisible (e == 1); for (auto* c : cards) c->setEnabled (e == 0); orb.setEnabled (e == 0); resized(); repaint(); };
+    addAndMakeVisible (engineSwitch);
+    addChildComponent (robotTimbre);
+    engineSwitch.onChange ((int) p.apvts.getRawParameterValue (IDs::engine)->load());
+
+    struct K { const char* id; const char* name; const char* suffix; int dec; };
+    for (auto k : { K { IDs::speed, "Velocita'", "x", 2 }, K { IDs::pitch, "Pitch", " st", 1 }, K { IDs::intonation, "Intonaz.", "%", 0 },
+                    K { IDs::formant, "Formanti", " st", 1 }, K { IDs::robotize, "Robot", "%", 0 }, K { IDs::robotHz, "Robot Hz", " Hz", 0 } })
+        addAndMakeVisible (timbre.add (new LabelledKnob (p.apvts, k.id, k.name, Colours::accent, k.suffix, k.dec)));
+
+    // ---- centro
     textEditor.setMultiLine (true, true);
     textEditor.setReturnKeyStartsNewLine (true);
     textEditor.setFont (juce::FontOptions (15.0f));
     textEditor.setText (proc.getText(), false);
-    textEditor.setTextToShowWhenEmpty ("Scrivi qui il testo del vocal...", Colours::textDim);
+    textEditor.setTextToShowWhenEmpty ("Scrivi qui il testo del vocal: virgole e punti diventano pause a tempo.", Colours::textDim);
+    textEditor.setColour (juce::TextEditor::backgroundColourId, Colours::panel);
+    textEditor.setColour (juce::TextEditor::outlineColourId, Colours::edge2);
+    textEditor.setColour (juce::TextEditor::focusedOutlineColourId, Colours::accent);
+    textEditor.setIndents (12, 8);
     textEditor.onTextChange = [this] { proc.setText (textEditor.getText()); };
     addAndMakeVisible (textEditor);
-
-    hintLabel.setText ("Virgole e punti diventano pause a tempo.", juce::dontSendNotification);
-    hintLabel.setFont (juce::FontOptions (11.0f));
-    hintLabel.setColour (juce::Label::textColourId, Colours::textDim);
-    addAndMakeVisible (hintLabel);
-    languageCombo = makeCombo (IDs::language, "LINGUA");
-
-    dictButton.setTooltip ("Pronuncia personalizzata: una riga per parola, \"parola = come si legge\" oppure \"parola = /ipa/\"");
+    addAndMakeVisible (language);
+    dictButton.setTooltip ("Pronuncia personalizzata: \"parola = come si legge\" oppure \"parola = /ipa/\"");
+    dictButton.setClickingTogglesState (false);
     dictButton.onClick = [this] { showDictionary(); };
     addAndMakeVisible (dictButton);
 
-    // ---- Voce
-    for (auto* b : { &neuralButton, &robotButton })
-    {
-        b->setClickingTogglesState (false);
-        addAndMakeVisible (b);
-    }
-    neuralButton.setTooltip ("Voce neurale Kokoro: naturale, 24 kHz");
-    robotButton.setTooltip ("Sintesi a formanti eSpeak: voci robotiche e sintetiche");
-    neuralButton.onClick = [this] { setEngine (0); };
-    robotButton.onClick = [this] { setEngine (1); };
+    timeline.onSelect = [this] (int s) { inspector.setSelected (s); };
+    addAndMakeVisible (timeline);
 
-    voiceACombo = makeCombo (IDs::voiceA, "VOCE");
-    voiceBCombo = makeCombo (IDs::voiceB, "MISCELA CON");
-    robotVarCombo = makeCombo (IDs::robotVariant, "TIMBRO");
-    blendK = makeKnob (IDs::orbX, "MISCELA", "%");
-    speedK = makeKnob (IDs::speed, "VELOCITA'", "x", 2);
-    pitchK = makeKnob (IDs::pitch, "PITCH", " st", 1);
-    intonK = makeKnob (IDs::intonation, "INTONAZIONE", "%");
-    formantK = makeKnob (IDs::formant, "FORMANTI", " st", 1);
-    robotK = makeKnob (IDs::robotize, "ROBOTIZZA", "%");
-    robotHzK = makeKnob (IDs::robotHz, "ROBOT HZ", " Hz");
-    intonK->slider.setTooltip ("0% = monotono (robotico), 100% = naturale, 200% = esagerato");
-    formantK->slider.setTooltip ("Timbro piu' scuro/grande (-) o chiaro/piccolo (+) senza cambiare l'intonazione");
+    struct M { const char* id; const char* name; juce::Colour c; };
+    for (auto m : { M { IDs::mExpr, "Espressivita'", Colours::accent }, M { IDs::mFlow, "Swing / Flow", Colours::accent },
+                    M { IDs::mWarmth, "Calore", Colours::accent2 }, M { IDs::mBreath, "Respiro", Colours::accent2 },
+                    M { IDs::mChoir, "Doppio / Coro", Colours::pink }, M { IDs::mSpace, "Spazio", Colours::pink } })
+        addAndMakeVisible (macros.add (new LabelledKnob (p.apvts, m.id, m.name, m.c, "%", 0, true)));
 
-    // ---- Ritmo
-    modeCombo = makeCombo (IDs::mode, "MODALITA'");
-    divCombo = makeCombo (IDs::division, "GRIGLIA");
-    bpmSrcCombo = makeCombo (IDs::bpmSource, "BPM");
-    stretchCombo = makeCombo (IDs::stretch, "STRETCH");
-    stepsK = makeKnob (IDs::stepsPerSyl, "STEP/SILL.");
-    swingK = makeKnob (IDs::swing, "SWING", "%");
-    legatoK = makeKnob (IDs::legato, "LEGATO", "%");
-    pcK = makeKnob (IDs::pCenter, "ATTACCO", "%");
-    grooveK = makeKnob (IDs::grooveAmt, "GROOVE", "%");
-    accentK = makeKnob (IDs::accentAmt, "ACCENTI", "%");
-    bpmK = makeKnob (IDs::bpmManual, "BPM MAN.", "", 1);
-    pcK->slider.setTooltip ("100% = la vocale cade esattamente sulla griglia (le consonanti anticipano), 0% = l'inizio della sillaba");
-    addAndMakeVisible (grooveView);
-
-    // ---- Riproduzione
-    playModeCombo = makeCombo (IDs::playMode, "MODALITA'");
-    loudCombo = makeCombo (IDs::loudness, "LIVELLO");
-    loopToggle = makeToggle (IDs::loop, "Loop");
-    startBarLabel.setText ("DALLA BATTUTA", juce::dontSendNotification);
-    startBarLabel.setFont (juce::FontOptions (11.5f, juce::Font::bold));
-    startBarLabel.setColour (juce::Label::textColourId, Colours::textDim);
-    addAndMakeVisible (startBarSlider);
-    startBarSlider.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 44, 22);
-    addAndMakeVisible (startBarLabel);
-    startBarAtt = std::make_unique<SliderAtt> (proc.apvts, IDs::startBar, startBarSlider);
-
-    // ---- Effetti
-    makeFx (IDs::deessOn, "De-esser", { makeKnob (IDs::deessAmount, "QUANTITA'", "", 2) });
-    makeFx (IDs::ringOn, "Ring mod", { makeKnob (IDs::ringFreq, "FREQ", " Hz"), makeKnob (IDs::ringMix, "MIX", "", 2) });
-    makeFx (IDs::distOn, "Distorsione", { makeKnob (IDs::distDrive, "DRIVE", " dB", 1), makeKnob (IDs::distMix, "MIX", "", 2) });
-    makeFx (IDs::crushOn, "Bitcrusher", { makeKnob (IDs::crushBits, "BIT", "", 1), makeKnob (IDs::crushDown, "DOWN", "x"), makeKnob (IDs::crushMix, "MIX", "", 2) });
-    makeFx (IDs::eqOn, "Equalizzatore", { makeKnob (IDs::eqLowCut, "LOW CUT", " Hz"), makeKnob (IDs::eqPresence, "PRESENZA", " dB", 1), makeKnob (IDs::eqHighCut, "HIGH CUT", " Hz") });
-    makeFx (IDs::compOn, "Compressore", { makeKnob (IDs::compThresh, "SOGLIA", " dB", 1), makeKnob (IDs::compRatio, "RATIO", ":1", 1) });
-    makeFx (IDs::doublerOn, "Doubler", { makeKnob (IDs::doublerMix, "MIX", "", 2), makeKnob (IDs::doublerWidth, "WIDTH", "", 2) });
-    makeFx (IDs::chorusOn, "Chorus", { makeKnob (IDs::chorusRate, "RATE", " Hz", 2), makeKnob (IDs::chorusDepth, "DEPTH", "", 2), makeKnob (IDs::chorusMix, "MIX", "", 2) });
-    makeFx (IDs::delayOn, "Delay", { makeKnob (IDs::delayFb, "FEEDBACK", "", 2), makeKnob (IDs::delayMix, "MIX", "", 2) });
-    makeFx (IDs::reverbOn, "Riverbero", { makeKnob (IDs::reverbSize, "SIZE", "", 2), makeKnob (IDs::reverbDamp, "DAMP", "", 2), makeKnob (IDs::reverbMix, "MIX", "", 2) });
-    makeCombo (IDs::delayDiv, "TEMPO"); // combo del delay (posizionato nella riga del delay)
-    outGainK = makeKnob (IDs::outGain, "VOLUME", " dB", 1);
-    limiterToggle = makeToggle (IDs::limiterOn, "Limiter");
-
-    // ---- Barra superiore e waveform
-    addAndMakeVisible (waveform);
-    addAndMakeVisible (dragHandle);
-    playButton.setClickingTogglesState (false);
-    playButton.onClick = [this] { proc.isPreviewing() ? proc.stopPreview() : proc.startPreview(); };
-    renderButton.onClick = [this] { proc.forceRender(); };
-    exportButton.onClick = [this] { exportWav(); };
-    renderButton.setTooltip ("Rigenera il vocal (avviene comunque in automatico a ogni modifica)");
-    exportButton.setTooltip ("Salva il vocal con gli effetti in un file WAV 24 bit");
-    for (auto* b : { &playButton, &renderButton, &exportButton })
-        addAndMakeVisible (b);
-
-    for (auto* l : { &statusLabel, &bpmLabel, &dragHint })
-    {
-        l->setFont (juce::FontOptions (12.0f));
-        l->setColour (juce::Label::textColourId, Colours::textDim);
-        addAndMakeVisible (l);
-    }
-    dragHint.setText ("Sillabe: trascina = sposta  |  bordo = durata  |  Shift = intonazione  |  rotella = volume  |  doppio clic = muta  |  tasto destro = menu",
-                      juce::dontSendNotification);
-    dragHint.setJustificationType (juce::Justification::centredRight);
+    // ---- destra
+    addAndMakeVisible (inspector);
 
     proc.addChangeListener (this);
-    waveform.setClip (proc.getClip());
-    updateEngineUI();
-    startTimerHz (10);
-
-    setSize (1240, 900);
+    timeline.setClip (proc.getClip());
+    updateVoiceInfo();
+    startTimerHz (15);
+    setSize (1280, 800);
 }
 
 VocalisEditor::~VocalisEditor()
@@ -190,30 +107,63 @@ VocalisEditor::~VocalisEditor()
     setLookAndFeel (nullptr);
 }
 
-// ============================================================================ Logica
-
-void VocalisEditor::setEngine (int e)
+void VocalisEditor::updateVoiceInfo()
 {
-    if (auto* p = proc.apvts.getParameter (IDs::engine))
-        p->setValueNotifyingHost (p->convertTo0to1 ((float) e));
-    updateEngineUI();
+    const float x = proc.apvts.getRawParameterValue (IDs::orbX)->load() / 100.0f;
+    const float y = proc.apvts.getRawParameterValue (IDs::orbY)->load() / 100.0f;
+    float w[4] = { (1 - x) * (1 - y), x * (1 - y), (1 - x) * y, x * y };
+    juce::StringArray names;
+    float tot = 0.0f;
+    for (int i = 0; i < 4; ++i) { names.add (cards[i]->voiceName()); if (names[i].isEmpty()) w[i] = 0.0f; tot += w[i]; }
+    if (tot <= 1.0e-4f) { w[0] = 1.0f; tot = 1.0f; }
+    juce::StringArray parts;
+    for (int i = 0; i < 4; ++i)
+    {
+        cards[i]->setWeight (w[i] / tot);
+        if (w[i] / tot > 0.01f && names[i].isNotEmpty()) parts.add (juce::String (juce::roundToInt (100.0f * w[i] / tot)) + "% " + names[i]);
+    }
+    orb.setCornerNames (names);
+    mixInfo.setText (parts.joinIntoString (juce::String::fromUTF8 (" \xc2\xb7 ")), juce::dontSendNotification);
 }
 
-void VocalisEditor::updateEngineUI()
+void VocalisEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    const int e = (int) proc.apvts.getRawParameterValue (IDs::engine)->load();
-    neuralButton.setToggleState (e == 0, juce::dontSendNotification);
-    robotButton.setToggleState (e == 1, juce::dontSendNotification);
-    if (e == shownEngine) return;
-    shownEngine = e;
+    timeline.setClip (proc.getClip());
+    inspector.refresh();
+    if (! textEditor.hasKeyboardFocus (true) && textEditor.getText() != proc.getText())
+        textEditor.setText (proc.getText(), false);
+}
 
-    const bool neural = e == 0;
-    voiceACombo->box.setVisible (neural);
-    voiceACombo->label.setVisible (neural);
-    robotVarCombo->box.setVisible (! neural);
-    robotVarCombo->label.setVisible (! neural);
-    voiceBCombo->box.setEnabled (neural);
-    blendK->slider.setEnabled (neural);
+void VocalisEditor::timerCallback()
+{
+    updateVoiceInfo();
+
+    const bool previewing = proc.isPreviewing();
+    playButton.setToggleState (previewing, juce::dontSendNotification);
+
+    auto clip = proc.getClip();
+    const double pos = proc.getPlayPosition();
+    if (clip != nullptr && pos >= 0)
+    {
+        const double beats = pos / (60.0 / clip->bpm * clip->sampleRate) - clip->prerollBeats;
+        const int startBar = (int) proc.apvts.getRawParameterValue (IDs::startBar)->load();
+        if (beats < 0) positionLabel.setText ("anticipo", juce::dontSendNotification);
+        else positionLabel.setText (juce::String (startBar + (int) std::floor (beats / 4.0)) + "." + juce::String ((int) std::floor (beats) % 4 + 1)
+                                    + "." + juce::String ((int) std::floor ((beats - std::floor (beats)) * 4.0) + 1), juce::dontSendNotification);
+    }
+    else positionLabel.setText ("-.-.-", juce::dontSendNotification);
+
+    const bool manual = (int) proc.apvts.getRawParameterValue (IDs::bpmSource)->load() == 1;
+    const bool sync = (int) proc.apvts.getRawParameterValue (IDs::playMode)->load() == 0;
+    tempoLabel.setText (juce::String (proc.getEffectiveBpm(), 1).replaceCharacter ('.', ',') + " BPM" + juce::String::fromUTF8 (" \xc2\xb7 ")
+                        + (manual ? "manuale" : "progetto") + juce::String::fromUTF8 (" \xc2\xb7 ") + (sync ? "sync DAW" : "trigger MIDI"),
+                        juce::dontSendNotification);
+
+    auto st = proc.getStatus();
+    const bool err = st.startsWith ("Errore") || st.contains ("non disponibile");
+    statusLabel.setColour (juce::Label::textColourId, err ? Colours::warn : proc.isRendering() ? Colours::textDim : Colours::ok);
+    statusLabel.setText (juce::String::fromUTF8 ("\xe2\x97\x8f ") + st, juce::dontSendNotification);
+    dictButton.setToggleState (proc.getDictionary().trim().isNotEmpty(), juce::dontSendNotification);
 }
 
 void VocalisEditor::showDictionary()
@@ -224,7 +174,7 @@ void VocalisEditor::showDictionary()
         {
             title.setText ("Dizionario di pronuncia", juce::dontSendNotification);
             title.setFont (juce::FontOptions (14.0f, juce::Font::bold));
-            help.setText ("Una riga per parola. Esempi:\n  plugin = plaghin\n  okay = /ˌoʊkˈeɪ/   (IPA tra barre)",
+            help.setText (juce::String::fromUTF8 ("Una riga per parola. Esempi:\n  plugin = plaghin\n  okay = /\xcb\x8c" "o\xca\x8a" "k\xcb\x88" "e\xc9\xaa/   (IPA tra barre)"),
                           juce::dontSendNotification);
             help.setFont (juce::FontOptions (12.0f));
             help.setColour (juce::Label::textColourId, Colours::textDim);
@@ -247,41 +197,7 @@ void VocalisEditor::showDictionary()
         juce::Label title, help;
         juce::TextEditor editor;
     };
-
     juce::CallOutBox::launchAsynchronously (std::make_unique<DictPanel> (proc), dictButton.getScreenBounds(), nullptr);
-}
-
-void VocalisEditor::changeListenerCallback (juce::ChangeBroadcaster*)
-{
-    waveform.setClip (proc.getClip());
-    statusLabel.setText (proc.getStatus(), juce::dontSendNotification);
-    if (! textEditor.hasKeyboardFocus (true) && textEditor.getText() != proc.getText())
-        textEditor.setText (proc.getText(), false);
-    grooveView.repaint();
-}
-
-void VocalisEditor::timerCallback()
-{
-    updateEngineUI();
-
-    const bool manual = (int) proc.apvts.getRawParameterValue (IDs::bpmSource)->load() == 1;
-    bpmK->slider.setEnabled (manual);
-    bpmLabel.setText (juce::String (proc.getEffectiveBpm(), 1) + " BPM" + (manual ? " (manuale)" : " (progetto)"),
-                      juce::dontSendNotification);
-
-    const bool grid = (int) proc.apvts.getRawParameterValue (IDs::mode)->load() != 0;
-    for (auto* k : { stepsK, swingK, legatoK, grooveK, accentK })
-        k->slider.setEnabled (grid);
-    divCombo->box.setEnabled (grid);
-    dictButton.setToggleState (proc.getDictionary().trim().isNotEmpty(), juce::dontSendNotification);
-
-    const bool sync = (int) proc.apvts.getRawParameterValue (IDs::playMode)->load() == 0;
-    startBarSlider.setEnabled (sync);
-    loopToggle->setEnabled (sync);
-
-    playButton.setButtonText (proc.isPreviewing() ? "STOP" : "ANTEPRIMA");
-    playButton.setToggleState (proc.isPreviewing(), juce::dontSendNotification);
-    statusLabel.setText (proc.getStatus(), juce::dontSendNotification);
 }
 
 void VocalisEditor::exportWav()
@@ -289,10 +205,8 @@ void VocalisEditor::exportWav()
     auto defaultName = proc.getText().substring (0, 24).retainCharacters (
         "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 ").trim();
     if (defaultName.isEmpty()) defaultName = "vocal";
-
     chooser = std::make_unique<juce::FileChooser> ("Esporta il vocal in WAV",
         juce::File::getSpecialLocation (juce::File::userMusicDirectory).getChildFile ("Vocalis " + defaultName + ".wav"), "*.wav");
-
     chooser->launchAsync (juce::FileBrowserComponent::saveMode | juce::FileBrowserComponent::warnAboutOverwriting,
         [this] (const juce::FileChooser& fc)
         {
@@ -301,169 +215,103 @@ void VocalisEditor::exportWav()
             f = f.withFileExtension ("wav");
             juce::String err;
             if (proc.exportWav (f, err))
-                statusLabel.setText ("Esportato: " + f.getFileName(), juce::dontSendNotification);
+            {
+                auto c = proc.getClip();
+                juce::String note = c != nullptr && c->prerollBeats > 0
+                    ? " (parte " + juce::String ((int) c->prerollBeats) + " quarto prima della battuta: l'attacco delle consonanti)" : juce::String();
+                statusLabel.setText ("Esportato: " + f.getFileName() + note, juce::dontSendNotification);
+            }
             else
                 juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Esporta WAV", err);
         });
 }
 
-// ============================================================================ Grafica e layout
-
 void VocalisEditor::paint (juce::Graphics& g)
 {
     g.fillAll (Colours::bg);
 
-    g.setGradientFill (juce::ColourGradient (Colours::accent, 20, 0, Colours::accent2, 200, 0, false));
-    g.setFont (juce::FontOptions (28.0f, juce::Font::bold));
-    g.drawText ("VOCALIS", 20, 14, 200, 34, juce::Justification::centredLeft);
+    // barra superiore
+    g.setColour (Colours::header);
+    g.fillRect (0, 0, getWidth(), headerH);
+    g.setColour (Colours::panelEdge);
+    g.drawHorizontalLine (headerH - 1, 0, (float) getWidth());
+    g.setColour (Colours::accent);
+    g.setFont (juce::FontOptions (22.0f, juce::Font::bold));
+    g.drawText ("VOCALIS", 20, 0, 120, headerH, juce::Justification::centredLeft);
     g.setColour (Colours::textDim);
     g.setFont (juce::FontOptions (12.0f));
-    g.drawText ("text to vocal  v2", 152, 26, 140, 18, juce::Justification::centredLeft);
-}
+    g.drawText ("3", 128, 6, 20, headerH, juce::Justification::centredLeft);
 
-void VocalisEditor::layoutKnobs (juce::Rectangle<int> area, juce::Array<Knob*> ks, int cols, int rowH)
-{
-    const int colW = area.getWidth() / cols;
-    for (int i = 0; i < ks.size(); ++i)
-    {
-        auto cell = juce::Rectangle<int> (area.getX() + (i % cols) * colW, area.getY() + (i / cols) * rowH, colW, rowH).reduced (2);
-        ks[i]->label.setBounds (cell.removeFromTop (15));
-        ks[i]->slider.setBounds (cell);
-    }
+    // colonna voci
+    g.setColour (Colours::side);
+    g.fillRect (0, headerH, leftW, getHeight() - headerH);
+    g.setColour (Colours::panelEdge);
+    g.drawVerticalLine (leftW - 1, (float) headerH, (float) getHeight());
+
+    auto section = [&] (juce::Component& below, const juce::String& t, int x, int w) { drawSectionTitle (g, { x, below.getY() - 20, w, 16 }, t); };
+    section (*cards[0], "Voci", 16, leftW - 32);
+    section (orb, "Miscela A B C D", 16, leftW - 32);
+    section (variant, "Variante", 16, leftW - 32);
+    section (engineSwitch, "Motore", 16, leftW - 32);
+    section (*timbre[0], "Timbro", 16, leftW - 32);
+    section (textEditor, "Testo", leftW + 16, 200);
 }
 
 void VocalisEditor::resized()
 {
-    auto bounds = getLocalBounds().reduced (16);
+    // ---- barra superiore
+    auto top = getLocalBounds().removeFromTop (headerH).reduced (16, 12);
+    top.removeFromLeft (140);
+    modeSwitch.setBounds (top.removeFromLeft (270));
+    top.removeFromLeft (16);
+    playButton.setBounds (top.removeFromLeft (36));
+    top.removeFromLeft (8);
+    positionLabel.setBounds (top.removeFromLeft (70));
+    tempoLabel.setBounds (top.removeFromLeft (230));
+    dragHandle.setBounds (top.removeFromRight (160));
+    top.removeFromRight (10);
+    exportButton.setBounds (top.removeFromRight (110));
+    top.removeFromRight (10);
+    statusLabel.setBounds (top);
 
-    // Barra superiore
-    auto header = bounds.removeFromTop (44);
-    header.removeFromLeft (300);
-    dragHandle.setBounds (header.removeFromRight (110).reduced (0, 6));
-    header.removeFromRight (8);
-    exportButton.setBounds (header.removeFromRight (120).reduced (0, 6));
-    header.removeFromRight (8);
-    renderButton.setBounds (header.removeFromRight (96).reduced (0, 6));
-    header.removeFromRight (8);
-    playButton.setBounds (header.removeFromRight (104).reduced (0, 6));
-    header.removeFromRight (12);
-    bpmLabel.setBounds (header.removeFromRight (140));
-    statusLabel.setBounds (header);
-    bounds.removeFromTop (8);
+    // ---- colonna voci
+    auto left = juce::Rectangle<int> (0, headerH, leftW, getHeight() - headerH).reduced (16, 0);
+    left.removeFromTop (36);
+    for (auto* c : cards) { c->setBounds (left.removeFromTop (48)); left.removeFromTop (6); }
+    left.removeFromTop (24);
+    orb.setBounds (left.removeFromTop (136));
+    left.removeFromTop (4);
+    mixInfo.setBounds (left.removeFromTop (18).withTrimmedLeft (-4));
+    left.removeFromTop (26);
+    auto vr = left.removeFromTop (30);
+    newVariant.setBounds (vr.removeFromRight (70));
+    variant.setBounds (vr.withTrimmedRight (8));
+    left.removeFromTop (26);
+    engineSwitch.setBounds (left.removeFromTop (34));
+    if (robotTimbre.isVisible()) { left.removeFromTop (6); robotTimbre.setBounds (left.removeFromTop (40)); }
+    left.removeFromTop (30);
+    const int kw = left.getWidth() / 3, kh = juce::jmin (62, (left.getHeight() - 8) / 2);
+    for (int i = 0; i < timbre.size(); ++i)
+        timbre[i]->setBounds (left.getX() + (i % 3) * kw, left.getY() + (i / 3) * kh, kw, kh);
 
-    // Editor delle sillabe in basso
-    auto bottom = bounds.removeFromBottom (206);
-    dragHint.setBounds (bottom.removeFromBottom (16));
-    waveform.setBounds (bottom.withTrimmedBottom (4));
-    bounds.removeFromBottom (10);
+    // ---- destra
+    inspector.setBounds (getWidth() - rightW, headerH, rightW, getHeight() - headerH);
 
-    const int gap = 12;
-    auto col1 = bounds.removeFromLeft (380);
-    bounds.removeFromLeft (gap);
-    auto col2 = bounds.removeFromLeft (372);
-    bounds.removeFromLeft (gap);
-    auto col3 = bounds;
-
-    auto comboRow = [] (juce::Rectangle<int> row, juce::Array<Combo*> cs)
-    {
-        const int cw = (row.getWidth() - 6 * (cs.size() - 1)) / juce::jmax (1, cs.size());
-        for (auto* cb : cs)
-        {
-            auto cell = row.removeFromLeft (cw);
-            cb->label.setBounds (cell.removeFromTop (14));
-            cb->box.setBounds (cell.withHeight (24));
-            row.removeFromLeft (6);
-        }
-    };
-
-    // ---- Colonna 1: Testo + Voce
-    textPanel.setBounds (col1.removeFromTop (196));
-    {
-        auto c = textPanel.getBounds().reduced (12).withTrimmedTop (22);
-        auto langRow = c.removeFromBottom (26);
-        languageCombo->label.setBounds (langRow.removeFromLeft (56));
-        languageCombo->box.setBounds (langRow.removeFromLeft (150));
-        langRow.removeFromLeft (8);
-        dictButton.setBounds (langRow.removeFromLeft (110));
-        hintLabel.setBounds (langRow.withTrimmedLeft (6));
-        c.removeFromBottom (6);
-        textEditor.setBounds (c);
-    }
-    hintLabel.setVisible (false);
-    col1.removeFromTop (gap);
-    voicePanel.setBounds (col1);
-    {
-        auto c = voicePanel.getBounds().reduced (12).withTrimmedTop (24);
-        auto typeRow = c.removeFromTop (30);
-        const int bw = (typeRow.getWidth() - 6) / 2;
-        neuralButton.setBounds (typeRow.removeFromLeft (bw));
-        typeRow.removeFromLeft (6);
-        robotButton.setBounds (typeRow);
-        c.removeFromTop (6);
-        auto row1 = c.removeFromTop (40);
-        comboRow (row1, { voiceACombo });
-        comboRow (row1, { robotVarCombo });
-        c.removeFromTop (2);
-        comboRow (c.removeFromTop (40), { voiceBCombo });
-        c.removeFromTop (4);
-        layoutKnobs (c, { blendK, speedK, pitchK, intonK, formantK, robotK, robotHzK }, 4, c.getHeight() / 2);
-    }
-
-    // ---- Colonna 2: Ritmo + Riproduzione
-    playPanel.setBounds (col2.removeFromBottom (122));
-    col2.removeFromBottom (gap);
-    rhythmPanel.setBounds (col2);
-    {
-        auto c = rhythmPanel.getBounds().reduced (12).withTrimmedTop (24);
-        comboRow (c.removeFromTop (40), { modeCombo, divCombo, bpmSrcCombo, stretchCombo });
-        c.removeFromTop (4);
-        layoutKnobs (c.removeFromTop (172), { stepsK, swingK, legatoK, pcK, grooveK, accentK, bpmK }, 4, 86);
-        c.removeFromTop (6);
-        grooveView.setBounds (c);
-    }
-    {
-        auto c = playPanel.getBounds().reduced (12).withTrimmedTop (24);
-        comboRow (c.removeFromTop (40), { playModeCombo, loudCombo });
-        c.removeFromTop (6);
-        auto r2 = c.removeFromTop (26);
-        startBarLabel.setBounds (r2.removeFromLeft (112));
-        startBarSlider.setBounds (r2.removeFromLeft (120));
-        r2.removeFromLeft (16);
-        loopToggle->setBounds (r2);
-    }
-
-    // ---- Colonna 3: Effetti
-    fxPanel.setBounds (col3);
-    {
-        auto c = fxPanel.getBounds().reduced (12).withTrimmedTop (22);
-        const int rows = fxRows.size() + 1;
-        const int rowH = juce::jmin (56, c.getHeight() / rows);
-        juce::ComboBox* delayDivBox = nullptr;
-        for (auto* cb : combos)
-            if (cb->label.getText() == "TEMPO") { delayDivBox = &cb->box; cb->label.setVisible (false); }
-
-        for (int i = 0; i < fxRows.size(); ++i)
-        {
-            auto row = c.removeFromTop (rowH);
-            auto* fx = fxRows[i];
-            fx->toggle.setBounds (row.removeFromLeft (124).withSizeKeepingCentre (124, 24));
-            if (fx->toggle.getButtonText() == "Delay" && delayDivBox != nullptr)
-                delayDivBox->setBounds (row.removeFromLeft (72).withSizeKeepingCentre (66, 24));
-            const int kw = 70;
-            for (auto* k : fx->knobs)
-            {
-                auto cell = row.removeFromLeft (kw);
-                k->label.setBounds (cell.removeFromTop (14));
-                k->slider.setBounds (cell);
-            }
-        }
-        auto last = c.removeFromTop (rowH);
-        limiterToggle->setBounds (last.removeFromLeft (124).withSizeKeepingCentre (124, 24));
-        auto cell = last.removeFromLeft (70);
-        outGainK->label.setBounds (cell.removeFromTop (14));
-        outGainK->slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        outGainK->slider.setBounds (cell);
-    }
+    // ---- centro
+    auto mid = juce::Rectangle<int> (leftW, headerH, getWidth() - leftW - rightW, getHeight() - headerH).reduced (16, 16);
+    auto head = mid.removeFromTop (24);
+    dictButton.setBounds (head.removeFromRight (100).withSizeKeepingCentre (100, 26));
+    head.removeFromRight (8);
+    language.setBounds (head.removeFromRight (150).withSizeKeepingCentre (150, 26));
+    language.box.setTooltip ("Lingua del testo");
+    mid.removeFromTop (4);
+    textEditor.setBounds (mid.removeFromTop (56));
+    mid.removeFromTop (12);
+    auto mac = mid.removeFromBottom (104);
+    const int mw = (mac.getWidth() - 5 * 10) / 6;
+    for (auto* m : macros) { m->setBounds (mac.removeFromLeft (mw)); mac.removeFromLeft (10); }
+    mid.removeFromBottom (12);
+    timeline.setBounds (mid);
 }
 
 juce::AudioProcessorEditor* VocalisProcessor::createEditor()

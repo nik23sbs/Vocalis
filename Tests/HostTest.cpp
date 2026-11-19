@@ -1,6 +1,7 @@
 // Test del plugin "come in una DAW": trasporto finto, render, processBlock, export.
 #include "PluginProcessor.h"
 #include "PyModelRunner.h"
+#include "PluginEditor.h"
 #include <iostream>
 
 struct FakePlayHead : juce::AudioPlayHead
@@ -259,6 +260,26 @@ int main()
         auto e = p2.getEdit (2);
         check (e.note == 67 && std::abs (e.onsetScale - 0.5f) < 1e-4f && e.vibrato && e.whisper && e.adlib && e.glide, "stato: modifiche v3 ripristinate");
         check (p2.getMelody().size() == p.getMelody().size(), "stato: melodia ripristinata");
+    }
+
+    // istantanea dell'interfaccia (VOCALIS_SNAPSHOT=file.png), con una sillaba selezionata
+    if (auto snap = juce::SystemStats::getEnvironmentVariable ("VOCALIS_SNAPSHOT", {}); snap.isNotEmpty())
+    {
+        setParam (p, IDs::mode, 2); setParam (p, IDs::harm1, 1); setParam (p, IDs::orbX, 35); p.setMelody ({}); setParam (p, IDs::mExpr, 70);
+        p.setText (juce::CharPointer_UTF8 ("Questa è la nuova voce di Vocalis, ogni sillaba cade a tempo"));
+        p.renderBlocking();
+        std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+        ed->setSize (1280, 800);
+        for (int tab = 0; tab < 4; ++tab)
+        {
+            if (auto* e = dynamic_cast<VocalisEditor*> (ed.get())) e->selectForSnapshot (5, tab);
+            auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 1.0f);
+            auto f = juce::File (snap).getSiblingFile (juce::File (snap).getFileNameWithoutExtension() + "_" + juce::String (tab) + ".png");
+            f.deleteFile();
+            juce::FileOutputStream fos (f);
+            juce::PNGImageFormat().writeImageToStream (img, fos);
+            std::cout << "     istantanea " << f.getFullPathName() << "\n";
+        }
     }
 
     std::cout << (fails == 0 ? "TUTTI I TEST OK\n" : "CI SONO ERRORI\n");
