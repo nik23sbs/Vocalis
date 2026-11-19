@@ -4,7 +4,7 @@ Uso: kokoro_ctrl_check.py <models dir>   (esce con 1 se un controllo fallisce)""
 import sys, os, json, numpy as np, onnxruntime as ort
 
 M = sys.argv[1]
-vocab = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "kokoro_vocab.json")))
+vocab = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "kokoro_vocab.json"), encoding="utf-8"))
 ps = "kjˈaʊ, sˈono vokˈalis."
 toks = [vocab[c] for c in ps if c in vocab]
 so = ort.SessionOptions(); so.log_severity_level = 3

@@ -10,7 +10,7 @@ import sys, os, json, time, numpy as np, onnxruntime as ort
 
 M, X = sys.argv[1], sys.argv[2]
 os.makedirs(X, exist_ok=True)
-vocab = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "kokoro_vocab.json")))
+vocab = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "kokoro_vocab.json"), encoding="utf-8"))
 so = ort.SessionOptions(); so.log_severity_level = 3
 s = ort.InferenceSession(os.path.join(M, "kokoro-v1.0-ctrl.onnx"), so)
 voices = np.load(os.path.join(M, "voices-v1.0.bin"))

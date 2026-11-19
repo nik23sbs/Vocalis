@@ -37,6 +37,7 @@ done
 # L'installer distribuisce solo questo (il motore accetta comunque anche l'originale).
 if [ ! -f "$DEST/models/kokoro-v1.0-ctrl.onnx" ]; then
   HERE="$(cd "$(dirname "$0")/.." && pwd)"
+  export PYTHONUTF8=1   # Windows: file di testo in UTF-8
   PYSYS=$(command -v python3 || command -v python)
   [ -d "$DEST/venv" ] || "$PYSYS" -m venv "$DEST/venv"
   PY="$DEST/venv/bin/python"; [ -x "$PY" ] || PY="$DEST/venv/Scripts/python.exe"   # Windows
