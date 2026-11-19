@@ -178,8 +178,8 @@ jobs:
           ./scripts/fetch_neural.sh neural
           ls -la neural/ort/lib neural/models
 
-      - name: Configura (Visual Studio, x64)
-        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DVOCALIS_BUILD_TESTS=ON -DVOCALIS_ORT_DIR="$(cygpath -m "$PWD/neural/ort")"
+      - name: Configura (Visual Studio installato, x64)
+        run: cmake -S . -B build -A x64 -DVOCALIS_BUILD_TESTS=ON -DVOCALIS_ORT_DIR="$(cygpath -m "$PWD/neural/ort")"
 
       - name: Compila
         run: cmake --build build --config Release --parallel --target Vocalis_VST3 Vocalis_Standalone VocalisCLI VocalisUnitTest VocalisHostTest
