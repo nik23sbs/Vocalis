@@ -28,7 +28,17 @@ if [ ! -d "$DEST/ort" ]; then
   rm -rf "$DEST/nupkg" "$DEST/ort.nupkg"
 fi
 test -f "$DEST/ort/include/onnxruntime_cxx_api.h" || { echo "ONNX Runtime non scaricato"; exit 1; }
-for f in kokoro-v1.0.onnx voices-v1.0.bin; do
+for f in voices-v1.0.bin $( [ -f "$DEST/models/kokoro-v1.0-ctrl.onnx" ] || echo kokoro-v1.0.onnx ); do
   [ -f "$DEST/models/$f" ] || curl -fsSL -o "$DEST/models/$f" "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.1/$f"
 done
+# Vocalis 3: modello "controllabile" (durate e F0 imposte, uscita f0) generato dal modello originale.
+# L'installer distribuisce solo questo (il motore accetta comunque anche l'originale).
+if [ ! -f "$DEST/models/kokoro-v1.0-ctrl.onnx" ]; then
+  HERE="$(cd "$(dirname "$0")/.." && pwd)"
+  [ -x "$DEST/venv/bin/python" ] || python3 -m venv "$DEST/venv"
+  "$DEST/venv/bin/python" -m pip install -q onnx==1.23.2 numpy onnxruntime
+  "$DEST/venv/bin/python" "$HERE/Tests/tools/kokoro_controllable.py" "$DEST/models/kokoro-v1.0.onnx" "$DEST/models/kokoro-v1.0-ctrl.onnx"
+  "$DEST/venv/bin/python" "$HERE/Tests/tools/kokoro_ctrl_check.py" "$DEST/models"
+fi
+rm -f "$DEST/models/kokoro-v1.0.onnx"
 ls -la "$DEST/ort/lib" "$DEST/models"
