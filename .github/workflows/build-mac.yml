@@ -50,6 +50,15 @@ jobs:
           $C "Ciao a tutti, sono Nicola." /tmp/out/nicola.wav --voice im_nicola --mode free | tee /tmp/out/nicola.txt
           grep -q "Motore: Kokoro" /tmp/out/nicola.txt
           $C "Miscela di due voci." /tmp/out/blend.wav --voice if_sara --voiceB im_nicola --blend 0.5 --pitch 3 --formant -2 | grep -E "Motore|Render"
+          # v3: vocali sulla griglia (< 1 ms), canto su note, armonie e doppio
+          $C "Questa è la nuova voce di Vocalis, ogni sillaba cade a tempo." /tmp/out/rap_v3.wav --bpm 96 | tee /tmp/out/rap_v3.txt
+          grep -q "Kokoro v3" /tmp/out/rap_v3.txt
+          awk '/Errore griglia max/ { if ($NF+0 > 1.0 && $(NF-1)+0 > 1.0) exit 1 }' /tmp/out/rap_v3.txt
+          $C "La luna splende sul mare" /tmp/out/canto_v3.wav --bpm 90 --vmode canto --vibrato 30 \
+             --notes "60:0:1,62:1:0.5,64:1.5:0.5,67:2:1,65:3:0.5,64:3.5:0.5,62:4:1,60:5:2" | tee /tmp/out/canto_v3.txt
+          grep -q "Note: 60 62 64 67 65 64 62 60" /tmp/out/canto_v3.txt
+          $C "La luna splende sul mare" /tmp/out/coro_v3.wav --bpm 90 --vmode canto --harm1 2 --harm2 4 --double \
+             --notes "60:0:1,62:1:0.5,64:1.5:0.5,67:2:1,65:3:0.5,64:3.5:0.5,62:4:1,60:5:2" | grep -E "Motore|Canali"
           ./build/VocalisHostTest_artefacts/Release/VocalisHostTest
 
       - uses: actions/upload-artifact@v4
