@@ -29,7 +29,7 @@ add_subdirectory(third_party/espeak-ng EXCLUDE_FROM_ALL)
 if(MSVC)
     # gli header di compatibilita' di eSpeak usano __has_include_next, che il compilatore Microsoft non conosce;
     # su Windows quegli header di sistema (unistd.h, endian.h, getopt.h) non esistono comunque
-    target_compile_definitions(espeak-include INTERFACE "__has_include_next(x)=0")
+    target_compile_options(espeak-include INTERFACE "/FI${CMAKE_CURRENT_SOURCE_DIR}/Source/Compat/msvc_has_include_next.h")
     foreach(t espeak-ng espeak-ng-bin ucd speechPlayer)
         if(TARGET ${t})
             target_compile_options(${t} PRIVATE /wd4068 /wd4244 /wd4267 /wd4996)
