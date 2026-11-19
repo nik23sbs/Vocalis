@@ -24,6 +24,8 @@ if [ ! -d "$DEST/ort" ]; then
       lipo -info "$DEST/ort/lib/libonnxruntime.$V.dylib" ;;
     Linux)
       cp "$DEST/nupkg/runtimes/linux-x64/native/libonnxruntime.so" "$DEST/ort/lib/libonnxruntime.so.$V" ;;
+    MINGW*|MSYS*|CYGWIN*)
+      cp "$DEST/nupkg/runtimes/win-x64/native/onnxruntime.dll" "$DEST/ort/lib/onnxruntime.dll" ;;
   esac
   rm -rf "$DEST/nupkg" "$DEST/ort.nupkg"
 fi
@@ -35,12 +37,14 @@ done
 # L'installer distribuisce solo questo (il motore accetta comunque anche l'originale).
 if [ ! -f "$DEST/models/kokoro-v1.0-ctrl.onnx" ]; then
   HERE="$(cd "$(dirname "$0")/.." && pwd)"
-  [ -x "$DEST/venv/bin/python" ] || python3 -m venv "$DEST/venv"
-  "$DEST/venv/bin/python" -m pip install -q onnx==1.23.2 numpy
-  "$DEST/venv/bin/python" "$HERE/Tests/tools/kokoro_controllable.py" "$DEST/models/kokoro-v1.0.onnx" "$DEST/models/kokoro-v1.0-ctrl.onnx"
+  PYSYS=$(command -v python3 || command -v python)
+  [ -d "$DEST/venv" ] || "$PYSYS" -m venv "$DEST/venv"
+  PY="$DEST/venv/bin/python"; [ -x "$PY" ] || PY="$DEST/venv/Scripts/python.exe"   # Windows
+  "$PY" -m pip install -q onnx==1.23.2 numpy
+  "$PY" "$HERE/Tests/tools/kokoro_controllable.py" "$DEST/models/kokoro-v1.0.onnx" "$DEST/models/kokoro-v1.0-ctrl.onnx"
   # verifica con onnxruntime (Python) se disponibile per questa piattaforma; il motore C++ viene comunque provato dai test
-  if "$DEST/venv/bin/python" -m pip install -q onnxruntime 2>/dev/null; then
-    "$DEST/venv/bin/python" "$HERE/Tests/tools/kokoro_ctrl_check.py" "$DEST/models"
+  if "$PY" -m pip install -q onnxruntime 2>/dev/null; then
+    "$PY" "$HERE/Tests/tools/kokoro_ctrl_check.py" "$DEST/models"
   else
     echo "onnxruntime (Python) non disponibile qui: salto la verifica Python del modello"
   fi

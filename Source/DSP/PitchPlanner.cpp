@@ -1,6 +1,7 @@
 #include "PitchPlanner.h"
 #include <algorithm>
 #include <cmath>
+#include <numeric>
 
 namespace vocalis
 {

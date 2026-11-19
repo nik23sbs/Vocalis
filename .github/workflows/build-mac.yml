@@ -8,10 +8,14 @@ on:
       runner:
         description: "Runner macOS"
         default: "macos-15"
+      jobs:
+        description: "Job da eseguire (all, oppure linux, mac, windows separati da virgola)"
+        default: "all"
 
 jobs:
   # ------------------------------------------------------------------ Linux: test del motore neurale reale
   linux-neural:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'linux') }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -68,6 +72,7 @@ jobs:
 
   # ------------------------------------------------------------------ macOS: plugin universale + installer
   mac:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'mac') }}
     runs-on: ${{ inputs.runner || 'macos-15' }}
     timeout-minutes: 120
     steps:
@@ -153,3 +158,82 @@ jobs:
         with:
           name: Vocalis-macOS
           path: dist/*.pkg
+
+  # ------------------------------------------------------------------ Windows: VST3 + app + installer
+  windows:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || contains(inputs.jobs, 'windows') }}
+    runs-on: windows-latest
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dipendenze + ONNX Runtime + modello
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./scripts/setup_deps.sh
+          ./scripts/fetch_neural.sh neural
+          ls -la neural/ort/lib neural/models
+
+      - name: Configura (Visual Studio, x64)
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DVOCALIS_BUILD_TESTS=ON -DVOCALIS_ORT_DIR="$(cygpath -m "$PWD/neural/ort")"
+
+      - name: Compila
+        run: cmake --build build --config Release --parallel --target Vocalis_VST3 Vocalis_Standalone VocalisCLI VocalisUnitTest VocalisHostTest
+
+      - name: Contenuto del plugin
+        run: |
+          find build/Vocalis_artefacts/Release/VST3/Vocalis.vst3 -maxdepth 3 | head -20
+          ls build/Vocalis_artefacts/Release/Standalone
+
+      - name: Test (DAW simulata + voce neurale)
+        run: |
+          export VOCALIS_MODELS="$(cygpath -m "$PWD/neural/models")"
+          export VOCALIS_ESPEAK_DATA="$(cygpath -m "$PWD/build/third_party/espeak-ng")"
+          mkdir -p out
+          ./build/VocalisUnitTest_artefacts/Release/VocalisUnitTest.exe
+          C=./build/VocalisCLI_artefacts/Release/VocalisCLI.exe
+          $C --kokoro-run "Prova della voce a tempo su Windows."
+          $C "Questa è la nuova voce di Vocalis, ogni sillaba cade a tempo." out/rap.wav --bpm 96 | tee out/rap.txt
+          grep -q "Kokoro v3" out/rap.txt
+          awk '/Errore griglia max/ { if ($(NF-1)+0 > 1.0) exit 1 }' out/rap.txt
+          $C "La luna splende sul mare" out/canto.wav --bpm 90 --vmode canto --harm1 2 --double \
+             --notes "60:0:1,62:1:0.5,64:1.5:0.5,67:2:1,65:3:0.5,64:3.5:0.5,62:4:1,60:5:2" | tee out/canto.txt
+          grep -q "Note: 60 62 64 67 65 64 62 60" out/canto.txt
+          ./build/VocalisHostTest_artefacts/Release/VocalisHostTest.exe
+
+      - name: Validazione VST3 (pluginval)
+        run: |
+          curl -sL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
+          unzip -q pluginval.zip
+          ./pluginval.exe --strictness-level 5 --validate-in-process --skip-gui-tests \
+            --validate "$(cygpath -w "$PWD/build/Vocalis_artefacts/Release/VST3/Vocalis.vst3")"
+
+      - name: Crea installer .exe (Inno Setup)
+        run: |
+          choco install innosetup -y --no-progress > /dev/null || true
+          ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
+          VERSION=$(grep -Eo 'project\(Vocalis VERSION [0-9.]+' CMakeLists.txt | awk '{print $3}')
+          "$ISCC" "/DVersion=$VERSION" "/DArt=$(cygpath -w "$PWD/build/Vocalis_artefacts/Release")" \
+                  "/DModels=$(cygpath -w "$PWD/neural/models")" installer/windows/Vocalis.iss
+          ls -la dist
+
+      - name: Prova installazione
+        run: |
+          ./dist/Vocalis-*-Windows.exe //VERYSILENT //SUPPRESSMSGBOXES //NORESTART //SP-
+          sleep 5
+          ls "/c/Program Files/Common Files/VST3/Vocalis.vst3/Contents"
+          ls "/c/Program Files/Vocalis/Vocalis.exe" "/c/ProgramData/Vocalis/models"
+          # senza VOCALIS_MODELS: il modello deve essere trovato in C:\ProgramData\Vocalis\models
+          VOCALIS_ESPEAK_DATA="$(cygpath -m "$PWD/build/third_party/espeak-ng")" ./build/VocalisCLI_artefacts/Release/VocalisCLI.exe \
+            "Installazione completata." out/inst.wav | tee out/inst.txt
+          grep -q "Motore: Kokoro" out/inst.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Vocalis-Windows
+          path: dist/*.exe
+

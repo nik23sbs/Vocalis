@@ -32,7 +32,8 @@ static bool loadOrt (juce::String& error)
     const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
     for (auto dir : { exe.getParentDirectory().getParentDirectory().getChildFile ("Frameworks"),
                       exe.getParentDirectory(),
-                      juce::File ("/Library/Application Support/Vocalis/lib") })
+                      juce::File ("/Library/Application Support/Vocalis/lib"),
+                      juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory).getChildFile ("Vocalis/lib") })
     {
        #if JUCE_MAC
         for (auto f : dir.findChildFiles (juce::File::findFiles, false, "libonnxruntime*.dylib"))
@@ -168,6 +169,7 @@ juce::File KokoroEngine::findModelDir()
     const auto userData = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory);
     candidates.add (userData.getChildFile ("Application Support/Vocalis/models"));
     candidates.add (juce::File ("/Library/Application Support/Vocalis/models"));
+    candidates.add (juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory).getChildFile ("Vocalis/models")); // Windows
     const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
     candidates.add (exe.getParentDirectory().getParentDirectory().getChildFile ("Resources/models"));
     candidates.add (exe.getParentDirectory().getChildFile ("Resources/models"));

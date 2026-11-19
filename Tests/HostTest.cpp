@@ -135,7 +135,8 @@ int main()
 
     // --- Effetti + export
     setParam (p, IDs::reverbOn, 1); setParam (p, IDs::delayOn, 1); setParam (p, IDs::robotize, 0);
-    auto f = juce::File ("/tmp/out/host_export.wav");
+    auto f = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vocalis_test/host_export.wav");
+    f.getParentDirectory().createDirectory();
     juce::String e;
     check (p.exportWav (f, e) && f.getSize() > 1000, "export WAV");
 
@@ -193,7 +194,8 @@ int main()
             }
             seq.updateMatchedPairs();
             juce::MidiFile mf; mf.setTicksPerQuarterNote (480); mf.addTrack (seq);
-            auto mid = juce::File ("/tmp/out/test_melody.mid");
+            auto mid = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("vocalis_test/test_melody.mid");
+            mid.getParentDirectory().createDirectory();
             mid.deleteFile();
             { juce::FileOutputStream fos (mid); mf.writeTo (fos); }
             juce::String err;

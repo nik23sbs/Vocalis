@@ -31,6 +31,7 @@ juce::File ESpeakCore::findDataParent()
         exe.getParentDirectory(),
         juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Vocalis"),
         juce::File ("/Library/Application Support/Vocalis"),
+        juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory).getChildFile ("Vocalis"),   // Windows: C:\ProgramData\Vocalis
     };
 
     if (auto env = juce::SystemStats::getEnvironmentVariable ("VOCALIS_ESPEAK_DATA", {}); env.isNotEmpty())

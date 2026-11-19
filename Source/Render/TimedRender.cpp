@@ -6,6 +6,8 @@
 #include "DSP/EffectsChain.h"
 #include "Engine/Phonemizer.h"
 #include <cmath>
+#include <cstring>
+#include <functional>
 
 namespace vocalis
 {
