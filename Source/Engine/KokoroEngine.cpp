@@ -17,7 +17,9 @@ static bool loadOrt (juce::String& error)
     static std::mutex m;
     static bool done = false, ok = false;
     static juce::String err;
-    static juce::DynamicLibrary lib;
+    // mai chiusa: gli oggetti ORT non devono essere distrutti dopo la libreria all'uscita del processo
+    static auto* libPtr = new juce::DynamicLibrary();
+    auto& lib = *libPtr;
 
     std::lock_guard<std::mutex> l (m);
     if (done) { error = err; return ok; }
@@ -133,8 +135,10 @@ namespace
 
     SharedModel& shared()
     {
-        static SharedModel m;
-        return m;
+        // allocata e mai distrutta: all'uscita della DAW le statiche interne di ONNX Runtime possono essere gia'
+        // state finalizzate, e distruggere Env/Session dopo di loro manda in crash il processo
+        static auto* m = new SharedModel();
+        return *m;
     }
 #endif
 }
