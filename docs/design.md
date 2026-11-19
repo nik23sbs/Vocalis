@@ -40,3 +40,24 @@ Uso personale: JUCE con licenza personale/GPL, eSpeak-NG (GPLv3) e Piper (MIT) s
 
 ## Lasciato al costruttore
 Layout preciso dell'interfaccia, valori di default, algoritmo esatto di onset detection.
+
+---
+
+# Vocalis 2 — motore professionale (2026-11-19)
+
+Approccio scelto: **A — Kokoro-82M** (voce neurale, Apache 2.0) + DSP rifatto. Alternative scartate per ora:
+Kokoro + Piper (piu' voci italiane ma installer piu' pesante), Chatterbox (clonazione voce, 0,8–3 GB e lento su CPU).
+
+Catena: testo → dizionario → fonetica eSpeak IPA con legature + regole misaki (identica all'addestramento di Kokoro)
+→ Kokoro (ONNX Runtime, 24 kHz) con **durate per fonema** (frame da 25 ms) → sillabe con nucleo vocalico,
+tagli rifiniti su minimi di energia e zero crossing, attacco vocale sul punto di massima salita d'energia,
+doppie italiane divise a meta' → WORLD solo se servono pitch/intonazione/formanti/pitch per sillaba
+→ robotizza → quantizzazione: **la vocale (P-center) cade sulla griglia**, **stretch solo del nucleo** (consonanti intatte),
+modifiche manuali per sillaba → ricampionamento → **loudness LUFS (BS.1770)**.
+Effetti in tempo reale: de-esser, ring, distorsione, bitcrusher, EQ, compressore, doubler, chorus, delay, riverbero, limiter.
+
+Scelte del costruttore (da verificare con l'uso):
+- la prima sillaba di una clip parte sul battere (non c'e' pre-roll prima della battuta di partenza);
+- il nucleo si allunga al massimo 6x, oltre resta una pausa;
+- modello fp32 (326 MB) per la massima qualita'; installato una sola volta in /Library/Application Support/Vocalis/models;
+- ONNX Runtime 1.23 (ultima serie con macOS Intel), dylib dentro ogni bundle (Contents/Frameworks).

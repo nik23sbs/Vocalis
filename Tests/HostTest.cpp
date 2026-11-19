@@ -33,7 +33,7 @@ int main()
     FakePlayHead ph;
     p.setPlayHead (&ph);
     p.prepareToPlay (sr, block);
-    setParam (p, IDs::eqOn, 0); setParam (p, IDs::compOn, 0);
+    setParam (p, IDs::eqOn, 0); setParam (p, IDs::compOn, 0); setParam (p, IDs::deessOn, 0); setParam (p, IDs::limiterOn, 0);
 
     // un primo blocco per far leggere BPM al plugin
     juce::AudioBuffer<float> buf (2, block); juce::MidiBuffer midi;
@@ -94,6 +94,30 @@ int main()
         check (peak > 0.05f, "trigger MIDI: la clip suona");
     }
 
+    // --- Modifiche per sillaba: muta la prima, sposta la seconda; devono restare nello stato
+    {
+        vocalis::SyllableEdit e; e.muted = true;
+        p.setEdit (0, e);
+        vocalis::SyllableEdit e2; e2.shiftBeats = 0.5; e2.pitchSemis = 3.0f;
+        p.setEdit (1, e2);
+        p.renderBlocking();
+        auto c2 = p.getClip();
+        check (c2 != nullptr && c2->markers.size() >= 2 && c2->markers[0].muted, "editor: sillaba 1 muta");
+        const double spb = 60.0 / c2->bpm * c2->sampleRate;
+        const int moved = c2->markers[1].nucleus;
+        p.resetEdits();
+        p.renderBlocking();
+        auto c3 = p.getClip();
+        std::cout << "     vocale sillaba 2: con modifica " << moved << ", senza " << c3->markers[1].nucleus << ", mezzo quarto = " << 0.5 * spb << "\n";
+        check (std::abs ((moved - c3->markers[1].nucleus) - 0.5 * spb) < 2.0, "editor: sillaba 2 spostata di mezzo quarto");
+        p.setEdit (1, e2);
+    }
+
+    // --- Dizionario
+    p.setDictionary ("test = tast");
+    p.renderBlocking();
+    check (p.getClip() != nullptr && p.getClip()->error.isEmpty(), "dizionario applicato senza errori");
+
     // --- Effetti + export
     setParam (p, IDs::reverbOn, 1); setParam (p, IDs::delayOn, 1); setParam (p, IDs::robotize, 0);
     auto f = juce::File ("/tmp/out/host_export.wav");
@@ -107,6 +131,8 @@ int main()
     p2.setStateInformation (state.getData(), (int) state.getSize());
     check (p2.getText() == p.getText(), "stato: testo ripristinato");
     check (p2.apvts.getRawParameterValue (IDs::reverbOn)->load() > 0.5f, "stato: parametri ripristinati");
+    check (std::abs (p2.getEdit (1).shiftBeats - 0.5) < 1e-6 && std::abs (p2.getEdit (1).pitchSemis - 3.0f) < 1e-4f, "stato: modifiche sillabe ripristinate");
+    check (p2.getDictionary() == "test = tast", "stato: dizionario ripristinato");
 
     std::cout << (fails == 0 ? "TUTTI I TEST OK\n" : "CI SONO ERRORI\n");
     return fails;

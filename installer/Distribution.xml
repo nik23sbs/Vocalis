@@ -10,6 +10,7 @@
         <line choice="vst3"/>
         <line choice="au"/>
         <line choice="app"/>
+        <line choice="models"/>
     </choices-outline>
 
     <choice id="vst3" title="Plugin VST3" description="Per Ableton Live, Cubase, Bitwig, Studio One, Reaper...">
@@ -22,7 +23,12 @@
         <pkg-ref id="com.vocalis.app"/>
     </choice>
 
+    <choice id="models" title="Voce neurale (modello Kokoro, 350 MB)" description="Necessaria per le voci naturali. Senza, Vocalis usa solo le voci robot/formant.">
+        <pkg-ref id="com.vocalis.models"/>
+    </choice>
+
     <pkg-ref id="com.vocalis.vst3" version="@VERSION@">vst3.pkg</pkg-ref>
+    <pkg-ref id="com.vocalis.models" version="@VERSION@">models.pkg</pkg-ref>
     <pkg-ref id="com.vocalis.au" version="@VERSION@">au.pkg</pkg-ref>
     <pkg-ref id="com.vocalis.app" version="@VERSION@">app.pkg</pkg-ref>
 </installer-gui-script>

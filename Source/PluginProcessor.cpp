@@ -6,19 +6,38 @@ using namespace vocalis;
 
 namespace
 {
-    juce::StringArray variantNames (VoiceType t)
-    {
-        juce::StringArray s;
-        for (auto& v : ESpeakEngine::variantsFor (t)) s.add (v.displayName);
-        return s;
-    }
-
     juce::StringArray languageNames()
     {
         juce::StringArray s;
         for (auto& l : ESpeakEngine::languages()) s.add (l.displayName);
         return s;
     }
+
+    juce::StringArray neuralVoiceNames()
+    {
+        juce::StringArray s;
+        for (auto& v : KokoroVoices::catalogue()) s.add (v.displayName);
+        return s;
+    }
+
+    juce::StringArray robotVariantNames()
+    {
+        juce::StringArray s;
+        for (auto& v : ESpeakEngine::variantsFor (VoiceType::Robot)) s.add (v.displayName);
+        for (auto& v : ESpeakEngine::variantsFor (VoiceType::Male)) s.add (juce::String ("Formant: ") + v.displayName);
+        for (auto& v : ESpeakEngine::variantsFor (VoiceType::Female)) s.add (juce::String ("Formant: ") + v.displayName);
+        return s;
+    }
+
+    juce::String robotVariantId (int index)
+    {
+        std::vector<const char*> ids;
+        for (auto t : { VoiceType::Robot, VoiceType::Male, VoiceType::Female })
+            for (auto& v : ESpeakEngine::variantsFor (t)) ids.push_back (v.id);
+        return ids[(size_t) juce::jlimit (0, (int) ids.size() - 1, index)];
+    }
+
+    const double loudnessValues[] = { 0.0, -20.0, -18.0, -16.0, -14.0, -12.0 };
 }
 
 // ============================================================================ Parametri
@@ -42,15 +61,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalisProcessor::createLayo
     auto skewed = [] (float lo, float hi, float centre) { NormalisableRange<float> r (lo, hi); r.setSkewForCentre (centre); return r; };
 
     // Voce
-    choice (IDs::voiceType, "Tipo voce", { "Uomo", "Donna", "Robot" }, 0);
-    choice (IDs::varMale, "Timbro uomo", variantNames (VoiceType::Male), 0);
-    choice (IDs::varFemale, "Timbro donna", variantNames (VoiceType::Female), 0);
-    choice (IDs::varRobot, "Timbro robot", variantNames (VoiceType::Robot), 0);
+    choice (IDs::engine, "Motore", { "Neurale", "Robot / Formant" }, 0);
+    choice (IDs::voiceA, "Voce", neuralVoiceNames(), 0);
+    { auto names = neuralVoiceNames(); names.insert (0, "Nessuna"); choice (IDs::voiceB, "Seconda voce", names, 0); }
+    flt (IDs::blend, "Miscela", { 0.0f, 100.0f, 1.0f }, 0.0f, pct);
+    choice (IDs::robotVariant, "Timbro robot", robotVariantNames(), 0);
     choice (IDs::language, "Lingua", languageNames(), 0);
-    integer (IDs::pitch, "Pitch", 0, 99, 50);
-    integer (IDs::intonation, "Intonazione", 0, 99, 50);
-    integer (IDs::speed, "Velocita'", 80, 400, 160);
-    flt (IDs::formant, "Formanti", { 0.7f, 1.4f, 0.01f }, 1.0f);
+    flt (IDs::speed, "Velocita'", { 0.5f, 2.0f, 0.01f }, 1.0f);
+    flt (IDs::pitch, "Pitch", { -12.0f, 12.0f, 0.01f }, 0.0f, AudioParameterFloatAttributes().withLabel ("st"));
+    flt (IDs::intonation, "Intonazione", { 0.0f, 200.0f, 1.0f }, 100.0f, pct);
+    flt (IDs::formant, "Formanti", { -6.0f, 6.0f, 0.01f }, 0.0f, AudioParameterFloatAttributes().withLabel ("st"));
     flt (IDs::robotize, "Robotizza", { 0.0f, 100.0f, 1.0f }, 0.0f, pct);
     flt (IDs::robotHz, "Robot Hz", skewed (40.0f, 400.0f, 120.0f), 110.0f, hz);
 
@@ -60,7 +80,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalisProcessor::createLayo
     integer (IDs::stepsPerSyl, "Step per sillaba", 1, 4, 1);
     flt (IDs::swing, "Swing", { 50.0f, 75.0f, 0.1f }, 50.0f, pct);
     flt (IDs::legato, "Legato", { 30.0f, 100.0f, 1.0f }, 90.0f, pct);
-    boolean (IDs::stretch, "Adatta allo step", true);
+    choice (IDs::stretch, "Stretch", { "Off", "Solo vocali", "Sillaba intera" }, 1);
+    flt (IDs::pCenter, "Attacco vocale", { 0.0f, 100.0f, 1.0f }, 100.0f, pct);
     flt (IDs::grooveAmt, "Quantita' groove", { 0.0f, 100.0f, 1.0f }, 80.0f, pct);
     flt (IDs::accentAmt, "Segui accenti", { 0.0f, 100.0f, 1.0f }, 50.0f, pct);
     choice (IDs::bpmSource, "Sorgente BPM", { "Progetto", "Manuale" }, 0);
@@ -70,8 +91,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalisProcessor::createLayo
     choice (IDs::playMode, "Riproduzione", { "Sync DAW", "Trigger MIDI" }, 0);
     integer (IDs::startBar, "Battuta di partenza", 1, 512, 1);
     boolean (IDs::loop, "Loop", true);
+    choice (IDs::loudness, "Loudness", { "Off (picco)", "-20 LUFS", "-18 LUFS", "-16 LUFS", "-14 LUFS", "-12 LUFS" }, 3);
 
     // Effetti
+    boolean (IDs::deessOn, "De-esser On", true);
+    flt (IDs::deessAmount, "De-esser", { 0.0f, 1.0f }, 0.4f);
+    boolean (IDs::doublerOn, "Doubler On", false);
+    flt (IDs::doublerMix, "Doubler Mix", { 0.0f, 1.0f }, 0.35f);
+    flt (IDs::doublerWidth, "Doubler Width", { 0.0f, 1.0f }, 0.8f);
+    boolean (IDs::limiterOn, "Limiter On", true);
+
     boolean (IDs::ringOn, "Ring On", false);
     flt (IDs::ringFreq, "Ring Freq", skewed (20.0f, 2000.0f, 200.0f), 220.0f, hz);
     flt (IDs::ringMix, "Ring Mix", { 0.0f, 1.0f }, 0.5f);
@@ -164,18 +193,25 @@ RenderRequest VocalisProcessor::buildRequest() const
     r.text = text;
     r.targetSampleRate = sampleRate;
 
-    const auto type = (VoiceType) (int) v (IDs::voiceType);
-    const char* varId = type == VoiceType::Female ? IDs::varFemale : type == VoiceType::Robot ? IDs::varRobot : IDs::varMale;
-    const auto& variants = ESpeakEngine::variantsFor (type);
-    r.voice.variant = variants[(size_t) juce::jlimit (0, (int) variants.size() - 1, (int) v (varId))].id;
+    const auto& cat = KokoroVoices::catalogue();
+    r.voice.engine = (int) v (IDs::engine) == 0 ? EngineType::Neural : EngineType::Formant;
+    r.voice.voiceA = cat[(size_t) juce::jlimit (0, (int) cat.size() - 1, (int) v (IDs::voiceA))].id;
+    const int vb = (int) v (IDs::voiceB);
+    r.voice.voiceB = vb > 0 ? juce::String (cat[(size_t) juce::jlimit (0, (int) cat.size() - 1, vb - 1)].id) : juce::String();
+    r.voice.blend = v (IDs::blend) / 100.0f;
+    r.voice.espeakVariant = robotVariantId ((int) v (IDs::robotVariant));
     const auto& langs = ESpeakEngine::languages();
     r.voice.language = langs[(size_t) juce::jlimit (0, (int) langs.size() - 1, (int) v (IDs::language))].id;
-    r.voice.pitch = (int) v (IDs::pitch);
-    r.voice.range = (int) v (IDs::intonation);
-    r.voice.rate = (int) v (IDs::speed);
-    r.voice.formant = v (IDs::formant);
+    r.voice.speed = v (IDs::speed);
+    r.voice.espeakRate = (int) std::round (160.0f * v (IDs::speed));
+    r.voice.pitchSemis = v (IDs::pitch);
+    r.voice.intonation = v (IDs::intonation) / 100.0f;
+    r.voice.formantSemis = v (IDs::formant);
     r.voice.robotize = v (IDs::robotize) / 100.0f;
     r.voice.robotHz = v (IDs::robotHz);
+    r.voice.dictionary = dictionary;
+    r.edits = edits;
+    r.loudnessLufs = loudnessValues[juce::jlimit (0, 5, (int) v (IDs::loudness))];
 
     r.rhythm.mode = (int) v (IDs::rhythmMode) == 0 ? RhythmSettings::Mode::Free : RhythmSettings::Mode::Grid;
     r.rhythm.bpm = std::round (getEffectiveBpm() * 100.0) / 100.0;
@@ -184,7 +220,8 @@ RenderRequest VocalisProcessor::buildRequest() const
     r.rhythm.stepsPerSyllable = (int) v (IDs::stepsPerSyl);
     r.rhythm.swing = v (IDs::swing) / 100.0;
     r.rhythm.legato = v (IDs::legato) / 100.0;
-    r.rhythm.stretchToFit = v (IDs::stretch) > 0.5f;
+    r.rhythm.stretch = (RhythmSettings::Stretch) juce::jlimit (0, 2, (int) v (IDs::stretch));
+    r.rhythm.pCenter = v (IDs::pCenter) / 100.0;
     r.rhythm.grooveAmount = v (IDs::grooveAmt) / 100.0;
     r.rhythm.accentAmount = v (IDs::accentAmt) / 100.0;
     r.groove = groove;
@@ -193,12 +230,13 @@ RenderRequest VocalisProcessor::buildRequest() const
 
 juce::String VocalisProcessor::requestSignature() const
 {
-    const char* ids[] = { IDs::voiceType, IDs::varMale, IDs::varFemale, IDs::varRobot, IDs::language, IDs::pitch,
-                          IDs::intonation, IDs::speed, IDs::formant, IDs::robotize, IDs::robotHz, IDs::rhythmMode,
-                          IDs::division, IDs::stepsPerSyl, IDs::swing, IDs::legato, IDs::stretch, IDs::grooveAmt,
-                          IDs::accentAmt };
+    const char* ids[] = { IDs::engine, IDs::voiceA, IDs::voiceB, IDs::blend, IDs::robotVariant, IDs::language, IDs::speed,
+                          IDs::pitch, IDs::intonation, IDs::formant, IDs::robotize, IDs::robotHz, IDs::rhythmMode,
+                          IDs::division, IDs::stepsPerSyl, IDs::swing, IDs::legato, IDs::stretch, IDs::pCenter,
+                          IDs::grooveAmt, IDs::accentAmt, IDs::loudness };
     juce::String s = text + "|" + juce::String (sampleRate) + "|" + juce::String (getEffectiveBpm(), 2)
-                   + "|" + juce::String (hostBeatsPerBar.load()) + "|g" + juce::String (grooveVersion);
+                   + "|" + juce::String (hostBeatsPerBar.load()) + "|g" + juce::String (grooveVersion)
+                   + "|d" + dictionary + "|e" + editsToString();
     for (auto* id : ids)
         s << "|" << juce::String (apvts.getRawParameterValue (id)->load(), 3);
     return s;
@@ -267,8 +305,25 @@ void VocalisProcessor::setClip (RenderedClip::Ptr c)
             if (clip != nullptr) graveyard.add (clip);
             clip = c;
         }
-        status = juce::String (c->markers.size()) + " sillabe  -  " + juce::String (c->lengthBeats / 4.0, 1)
-               + " battute  -  " + juce::String (c->bpm, 1) + " BPM";
+        status = c->engineName + "  -  " + juce::String (c->syllableLabels.size()) + " sillabe  -  "
+               + juce::String (c->lengthBeats / juce::jmax (1, hostBeatsPerBar.load()), 1) + " battute  -  "
+               + juce::String (c->renderMs / 1000.0, 2) + " s";
+        if (c->warning.isNotEmpty())
+            status = c->warning;
+
+        // il testo e' cambiato: le modifiche manuali valgono solo per le sillabe che sono rimaste uguali
+        bool changed = false;
+        for (size_t i = 0; i < edits.size(); ++i)
+        {
+            if (edits[i].isDefault()) continue;
+            if ((int) i >= c->syllableLabels.size() || (edits[i].label.isNotEmpty() && edits[i].label != c->syllableLabels[(int) i]))
+            {
+                edits[i] = {};
+                changed = true;
+            }
+        }
+        if (changed)
+            forceRender();
     }
     sendChangeMessage();
 }
@@ -277,6 +332,70 @@ RenderedClip::Ptr VocalisProcessor::getClip() const
 {
     const juce::SpinLock::ScopedLockType l (clipLock);
     return clip;
+}
+
+void VocalisProcessor::setEdit (int index, const SyllableEdit& e)
+{
+    if (index < 0) return;
+    if ((int) edits.size() <= index) edits.resize ((size_t) index + 1);
+    edits[(size_t) index] = e;
+    if (auto c = getClip(); c != nullptr && index < c->syllableLabels.size())
+        edits[(size_t) index].label = c->syllableLabels[index];
+    sendChangeMessage();
+}
+
+SyllableEdit VocalisProcessor::getEdit (int index) const
+{
+    return (index >= 0 && index < (int) edits.size()) ? edits[(size_t) index] : SyllableEdit {};
+}
+
+void VocalisProcessor::resetEdits()
+{
+    edits.clear();
+    sendChangeMessage();
+}
+
+bool VocalisProcessor::hasEdits() const
+{
+    for (auto& e : edits) if (! e.isDefault()) return true;
+    return false;
+}
+
+juce::String VocalisProcessor::editsToString() const
+{
+    juce::StringArray parts;
+    for (size_t i = 0; i < edits.size(); ++i)
+    {
+        const auto& e = edits[i];
+        if (e.isDefault()) continue;
+        parts.add (juce::String ((int) i) + ":" + juce::String (e.shiftBeats, 5) + ":" + juce::String (e.lengthScale, 4) + ":"
+                   + juce::String (e.pitchSemis, 3) + ":" + juce::String (e.gainDb, 2) + ":" + (e.muted ? "1" : "0") + ":"
+                   + juce::Base64::toBase64 (e.label));
+    }
+    return parts.joinIntoString (";");
+}
+
+void VocalisProcessor::editsFromString (const juce::String& str)
+{
+    edits.clear();
+    for (auto tok : juce::StringArray::fromTokens (str, ";", ""))
+    {
+        auto p = juce::StringArray::fromTokens (tok, ":", "");
+        if (p.size() < 6) continue;
+        const int i = p[0].getIntValue();
+        if (i < 0 || i > 4096) continue;
+        if ((int) edits.size() <= i) edits.resize ((size_t) i + 1);
+        auto& e = edits[(size_t) i];
+        e.shiftBeats = p[1].getDoubleValue(); e.lengthScale = p[2].getDoubleValue();
+        e.pitchSemis = p[3].getFloatValue(); e.gainDb = p[4].getFloatValue(); e.muted = p[5] == "1";
+        if (p.size() > 6) { juce::MemoryOutputStream mo; juce::Base64::convertFromBase64 (mo, p[6]); e.label = mo.toUTF8(); }
+    }
+}
+
+void VocalisProcessor::setDictionary (const juce::String& d)
+{
+    dictionary = d;
+    sendChangeMessage();
 }
 
 bool VocalisProcessor::loadGrooveFile (const juce::File& f, juce::String& error)
@@ -314,6 +433,9 @@ EffectsParams VocalisProcessor::readEffects() const
     p.chorusOn = v (IDs::chorusOn) > 0.5f; p.chorusRate = v (IDs::chorusRate); p.chorusDepth = v (IDs::chorusDepth); p.chorusMix = v (IDs::chorusMix);
     p.delayOn = v (IDs::delayOn) > 0.5f;   p.delayDiv = (int) v (IDs::delayDiv); p.delayFeedback = v (IDs::delayFb); p.delayMix = v (IDs::delayMix);
     p.reverbOn = v (IDs::reverbOn) > 0.5f; p.reverbSize = v (IDs::reverbSize); p.reverbDamp = v (IDs::reverbDamp); p.reverbMix = v (IDs::reverbMix);
+    p.deessOn = v (IDs::deessOn) > 0.5f;   p.deessAmount = v (IDs::deessAmount);
+    p.doublerOn = v (IDs::doublerOn) > 0.5f; p.doublerMix = v (IDs::doublerMix); p.doublerWidth = v (IDs::doublerWidth);
+    p.limiterOn = v (IDs::limiterOn) > 0.5f;
     p.outGainDb = v (IDs::outGain);
     return p;
 }
@@ -482,6 +604,8 @@ void VocalisProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
     state.setProperty ("text", text, nullptr);
+    state.setProperty ("dictionary", dictionary, nullptr);
+    state.setProperty ("edits", editsToString(), nullptr);
     state.removeChild (state.getChildWithName ("GROOVE"), nullptr);
     if (! groove.isEmpty())
         state.appendChild (groove.toValueTree(), nullptr);
@@ -499,6 +623,8 @@ void VocalisProcessor::setStateInformation (const void* data, int sizeInBytes)
             return;
 
         text = state.getProperty ("text", text).toString();
+        dictionary = state.getProperty ("dictionary").toString();
+        editsFromString (state.getProperty ("edits").toString());
         groove = GrooveTemplate::fromValueTree (state.getChildWithName ("GROOVE"));
         ++grooveVersion;
         state.removeChild (state.getChildWithName ("GROOVE"), nullptr);

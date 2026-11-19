@@ -62,7 +62,7 @@ VocalisEditor::FxRow* VocalisEditor::makeFx (const char* onId, const juce::Strin
 // ============================================================================ Costruzione
 
 VocalisEditor::VocalisEditor (VocalisProcessor& p)
-    : AudioProcessorEditor (&p), proc (p), grooveView (p), waveform (p)
+    : AudioProcessorEditor (&p), proc (p), grooveView (p), waveform (p), dragHandle (p)
 {
     setLookAndFeel (&lnf);
 
@@ -84,46 +84,54 @@ VocalisEditor::VocalisEditor (VocalisProcessor& p)
     addAndMakeVisible (hintLabel);
     languageCombo = makeCombo (IDs::language, "LINGUA");
 
+    dictButton.setTooltip ("Pronuncia personalizzata: una riga per parola, \"parola = come si legge\" oppure \"parola = /ipa/\"");
+    dictButton.onClick = [this] { showDictionary(); };
+    addAndMakeVisible (dictButton);
+
     // ---- Voce
-    for (auto* b : { &maleButton, &femaleButton, &robotButton })
+    for (auto* b : { &neuralButton, &robotButton })
     {
         b->setClickingTogglesState (false);
         addAndMakeVisible (b);
     }
-    maleButton.onClick = [this] { setVoiceType (0); };
-    femaleButton.onClick = [this] { setVoiceType (1); };
-    robotButton.onClick = [this] { setVoiceType (2); };
+    neuralButton.setTooltip ("Voce neurale Kokoro: naturale, 24 kHz");
+    robotButton.setTooltip ("Sintesi a formanti eSpeak: voci robotiche e sintetiche");
+    neuralButton.onClick = [this] { setEngine (0); };
+    robotButton.onClick = [this] { setEngine (1); };
 
-    timbreLabel.setText ("TIMBRO", juce::dontSendNotification);
-    timbreLabel.setFont (juce::FontOptions (11.5f, juce::Font::bold));
-    timbreLabel.setColour (juce::Label::textColourId, Colours::textDim);
-    addAndMakeVisible (timbreBox);
-    addAndMakeVisible (timbreLabel);
-
-    pitchK = makeKnob (IDs::pitch, "PITCH");
-    intonK = makeKnob (IDs::intonation, "INTONAZIONE");
-    speedK = makeKnob (IDs::speed, "VELOCITA'", " wpm");
-    formantK = makeKnob (IDs::formant, "FORMANTI", "x", 2);
+    voiceACombo = makeCombo (IDs::voiceA, "VOCE");
+    voiceBCombo = makeCombo (IDs::voiceB, "MISCELA CON");
+    robotVarCombo = makeCombo (IDs::robotVariant, "TIMBRO");
+    blendK = makeKnob (IDs::blend, "MISCELA", "%");
+    speedK = makeKnob (IDs::speed, "VELOCITA'", "x", 2);
+    pitchK = makeKnob (IDs::pitch, "PITCH", " st", 1);
+    intonK = makeKnob (IDs::intonation, "INTONAZIONE", "%");
+    formantK = makeKnob (IDs::formant, "FORMANTI", " st", 1);
     robotK = makeKnob (IDs::robotize, "ROBOTIZZA", "%");
     robotHzK = makeKnob (IDs::robotHz, "ROBOT HZ", " Hz");
+    intonK->slider.setTooltip ("0% = monotono (robotico), 100% = naturale, 200% = esagerato");
+    formantK->slider.setTooltip ("Timbro piu' scuro/grande (-) o chiaro/piccolo (+) senza cambiare l'intonazione");
 
     // ---- Ritmo
     modeCombo = makeCombo (IDs::rhythmMode, "MODALITA'");
     divCombo = makeCombo (IDs::division, "GRIGLIA");
     bpmSrcCombo = makeCombo (IDs::bpmSource, "BPM");
-    stepsK = makeKnob (IDs::stepsPerSyl, "STEP/SILLABA");
+    stretchCombo = makeCombo (IDs::stretch, "STRETCH");
+    stepsK = makeKnob (IDs::stepsPerSyl, "STEP/SILL.");
     swingK = makeKnob (IDs::swing, "SWING", "%");
     legatoK = makeKnob (IDs::legato, "LEGATO", "%");
+    pcK = makeKnob (IDs::pCenter, "ATTACCO", "%");
     grooveK = makeKnob (IDs::grooveAmt, "GROOVE", "%");
     accentK = makeKnob (IDs::accentAmt, "ACCENTI", "%");
-    bpmK = makeKnob (IDs::bpmManual, "BPM MANUALE", "", 1);
-    stretchToggle = makeToggle (IDs::stretch, "Adatta allo step");
+    bpmK = makeKnob (IDs::bpmManual, "BPM MAN.", "", 1);
+    pcK->slider.setTooltip ("100% = la vocale cade esattamente sulla griglia (le consonanti anticipano), 0% = l'inizio della sillaba");
     addAndMakeVisible (grooveView);
 
     // ---- Riproduzione
     playModeCombo = makeCombo (IDs::playMode, "MODALITA'");
+    loudCombo = makeCombo (IDs::loudness, "LIVELLO");
     loopToggle = makeToggle (IDs::loop, "Loop");
-    startBarLabel.setText ("PARTE DALLA BATTUTA", juce::dontSendNotification);
+    startBarLabel.setText ("DALLA BATTUTA", juce::dontSendNotification);
     startBarLabel.setFont (juce::FontOptions (11.5f, juce::Font::bold));
     startBarLabel.setColour (juce::Label::textColourId, Colours::textDim);
     addAndMakeVisible (startBarSlider);
@@ -132,22 +140,23 @@ VocalisEditor::VocalisEditor (VocalisProcessor& p)
     startBarAtt = std::make_unique<SliderAtt> (proc.apvts, IDs::startBar, startBarSlider);
 
     // ---- Effetti
+    makeFx (IDs::deessOn, "De-esser", { makeKnob (IDs::deessAmount, "QUANTITA'", "", 2) });
     makeFx (IDs::ringOn, "Ring mod", { makeKnob (IDs::ringFreq, "FREQ", " Hz"), makeKnob (IDs::ringMix, "MIX", "", 2) });
     makeFx (IDs::distOn, "Distorsione", { makeKnob (IDs::distDrive, "DRIVE", " dB", 1), makeKnob (IDs::distMix, "MIX", "", 2) });
     makeFx (IDs::crushOn, "Bitcrusher", { makeKnob (IDs::crushBits, "BIT", "", 1), makeKnob (IDs::crushDown, "DOWN", "x"), makeKnob (IDs::crushMix, "MIX", "", 2) });
     makeFx (IDs::eqOn, "Equalizzatore", { makeKnob (IDs::eqLowCut, "LOW CUT", " Hz"), makeKnob (IDs::eqPresence, "PRESENZA", " dB", 1), makeKnob (IDs::eqHighCut, "HIGH CUT", " Hz") });
     makeFx (IDs::compOn, "Compressore", { makeKnob (IDs::compThresh, "SOGLIA", " dB", 1), makeKnob (IDs::compRatio, "RATIO", ":1", 1) });
+    makeFx (IDs::doublerOn, "Doubler", { makeKnob (IDs::doublerMix, "MIX", "", 2), makeKnob (IDs::doublerWidth, "WIDTH", "", 2) });
     makeFx (IDs::chorusOn, "Chorus", { makeKnob (IDs::chorusRate, "RATE", " Hz", 2), makeKnob (IDs::chorusDepth, "DEPTH", "", 2), makeKnob (IDs::chorusMix, "MIX", "", 2) });
-    {
-        auto* row = makeFx (IDs::delayOn, "Delay", { makeKnob (IDs::delayFb, "FEEDBACK", "", 2), makeKnob (IDs::delayMix, "MIX", "", 2) });
-        juce::ignoreUnused (row);
-    }
+    makeFx (IDs::delayOn, "Delay", { makeKnob (IDs::delayFb, "FEEDBACK", "", 2), makeKnob (IDs::delayMix, "MIX", "", 2) });
     makeFx (IDs::reverbOn, "Riverbero", { makeKnob (IDs::reverbSize, "SIZE", "", 2), makeKnob (IDs::reverbDamp, "DAMP", "", 2), makeKnob (IDs::reverbMix, "MIX", "", 2) });
     makeCombo (IDs::delayDiv, "TEMPO"); // combo del delay (posizionato nella riga del delay)
     outGainK = makeKnob (IDs::outGain, "VOLUME", " dB", 1);
+    limiterToggle = makeToggle (IDs::limiterOn, "Limiter");
 
     // ---- Barra superiore e waveform
     addAndMakeVisible (waveform);
+    addAndMakeVisible (dragHandle);
     playButton.setClickingTogglesState (false);
     playButton.onClick = [this] { proc.isPreviewing() ? proc.stopPreview() : proc.startPreview(); };
     renderButton.onClick = [this] { proc.forceRender(); };
@@ -163,56 +172,83 @@ VocalisEditor::VocalisEditor (VocalisProcessor& p)
         l->setColour (juce::Label::textColourId, Colours::textDim);
         addAndMakeVisible (l);
     }
-    dragHint.setText ("Trascina la waveform nella DAW per importare il vocal", juce::dontSendNotification);
+    dragHint.setText ("Sillabe: trascina = sposta  |  bordo = durata  |  Shift = intonazione  |  rotella = volume  |  doppio clic = muta  |  tasto destro = menu",
+                      juce::dontSendNotification);
     dragHint.setJustificationType (juce::Justification::centredRight);
 
     proc.addChangeListener (this);
     waveform.setClip (proc.getClip());
-    updateVoiceTypeUI();
+    updateEngineUI();
     startTimerHz (10);
 
-    setSize (1180, 830);
+    setSize (1240, 900);
 }
 
 VocalisEditor::~VocalisEditor()
 {
     proc.removeChangeListener (this);
-    timbreAtt.reset();
     setLookAndFeel (nullptr);
 }
 
 // ============================================================================ Logica
 
-void VocalisEditor::setVoiceType (int t)
+void VocalisEditor::setEngine (int e)
 {
-    if (auto* p = proc.apvts.getParameter (IDs::voiceType))
-        p->setValueNotifyingHost (p->convertTo0to1 ((float) t));
-
-    // Il robot parte gia' robotizzato
-    if (t == 2)
-        if (auto* r = proc.apvts.getParameter (IDs::robotize); r != nullptr && r->convertFrom0to1 (r->getValue()) < 1.0f)
-            r->setValueNotifyingHost (r->convertTo0to1 (70.0f));
-
-    updateVoiceTypeUI();
+    if (auto* p = proc.apvts.getParameter (IDs::engine))
+        p->setValueNotifyingHost (p->convertTo0to1 ((float) e));
+    updateEngineUI();
 }
 
-void VocalisEditor::updateVoiceTypeUI()
+void VocalisEditor::updateEngineUI()
 {
-    const int t = (int) proc.apvts.getRawParameterValue (IDs::voiceType)->load();
-    maleButton.setToggleState (t == 0, juce::dontSendNotification);
-    femaleButton.setToggleState (t == 1, juce::dontSendNotification);
-    robotButton.setToggleState (t == 2, juce::dontSendNotification);
+    const int e = (int) proc.apvts.getRawParameterValue (IDs::engine)->load();
+    neuralButton.setToggleState (e == 0, juce::dontSendNotification);
+    robotButton.setToggleState (e == 1, juce::dontSendNotification);
+    if (e == shownEngine) return;
+    shownEngine = e;
 
-    if (t == shownVoiceType)
-        return;
-    shownVoiceType = t;
+    const bool neural = e == 0;
+    voiceACombo->box.setVisible (neural);
+    voiceACombo->label.setVisible (neural);
+    robotVarCombo->box.setVisible (! neural);
+    robotVarCombo->label.setVisible (! neural);
+    voiceBCombo->box.setEnabled (neural);
+    blendK->slider.setEnabled (neural);
+}
 
-    const char* id = t == 1 ? IDs::varFemale : t == 2 ? IDs::varRobot : IDs::varMale;
-    timbreAtt.reset();
-    timbreBox.clear (juce::dontSendNotification);
-    if (auto* p = dynamic_cast<juce::AudioParameterChoice*> (proc.apvts.getParameter (id)))
-        timbreBox.addItemList (p->choices, 1);
-    timbreAtt = std::make_unique<ComboAtt> (proc.apvts, id, timbreBox);
+void VocalisEditor::showDictionary()
+{
+    struct DictPanel : public juce::Component
+    {
+        DictPanel (VocalisProcessor& p) : proc (p)
+        {
+            title.setText ("Dizionario di pronuncia", juce::dontSendNotification);
+            title.setFont (juce::FontOptions (14.0f, juce::Font::bold));
+            help.setText ("Una riga per parola. Esempi:\n  plugin = plaghin\n  okay = /ˌoʊkˈeɪ/   (IPA tra barre)",
+                          juce::dontSendNotification);
+            help.setFont (juce::FontOptions (12.0f));
+            help.setColour (juce::Label::textColourId, Colours::textDim);
+            editor.setMultiLine (true, false);
+            editor.setReturnKeyStartsNewLine (true);
+            editor.setFont (juce::FontOptions (14.0f));
+            editor.setText (proc.getDictionary(), false);
+            editor.onTextChange = [this] { proc.setDictionary (editor.getText()); };
+            for (auto* c : std::initializer_list<juce::Component*> { &title, &help, &editor }) addAndMakeVisible (c);
+            setSize (380, 260);
+        }
+        void resized() override
+        {
+            auto r = getLocalBounds().reduced (8);
+            title.setBounds (r.removeFromTop (22));
+            help.setBounds (r.removeFromTop (52));
+            editor.setBounds (r);
+        }
+        VocalisProcessor& proc;
+        juce::Label title, help;
+        juce::TextEditor editor;
+    };
+
+    juce::CallOutBox::launchAsynchronously (std::make_unique<DictPanel> (proc), dictButton.getScreenBounds(), nullptr);
 }
 
 void VocalisEditor::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -226,7 +262,7 @@ void VocalisEditor::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void VocalisEditor::timerCallback()
 {
-    updateVoiceTypeUI();
+    updateEngineUI();
 
     const bool manual = (int) proc.apvts.getRawParameterValue (IDs::bpmSource)->load() == 1;
     bpmK->slider.setEnabled (manual);
@@ -237,6 +273,7 @@ void VocalisEditor::timerCallback()
     for (auto* k : { stepsK, swingK, legatoK, grooveK, accentK })
         k->slider.setEnabled (grid);
     divCombo->box.setEnabled (grid);
+    dictButton.setToggleState (proc.getDictionary().trim().isNotEmpty(), juce::dontSendNotification);
 
     const bool sync = (int) proc.apvts.getRawParameterValue (IDs::playMode)->load() == 0;
     startBarSlider.setEnabled (sync);
@@ -281,7 +318,7 @@ void VocalisEditor::paint (juce::Graphics& g)
     g.drawText ("VOCALIS", 20, 14, 200, 34, juce::Justification::centredLeft);
     g.setColour (Colours::textDim);
     g.setFont (juce::FontOptions (12.0f));
-    g.drawText ("text to vocal", 152, 26, 120, 18, juce::Justification::centredLeft);
+    g.drawText ("text to vocal  v2", 152, 26, 140, 18, juce::Justification::centredLeft);
 }
 
 void VocalisEditor::layoutKnobs (juce::Rectangle<int> area, juce::Array<Knob*> ks, int cols, int rowH)
@@ -301,92 +338,98 @@ void VocalisEditor::resized()
 
     // Barra superiore
     auto header = bounds.removeFromTop (44);
-    header.removeFromLeft (290);
-    exportButton.setBounds (header.removeFromRight (130).reduced (0, 6));
+    header.removeFromLeft (300);
+    dragHandle.setBounds (header.removeFromRight (110).reduced (0, 6));
     header.removeFromRight (8);
-    renderButton.setBounds (header.removeFromRight (100).reduced (0, 6));
+    exportButton.setBounds (header.removeFromRight (120).reduced (0, 6));
     header.removeFromRight (8);
-    playButton.setBounds (header.removeFromRight (110).reduced (0, 6));
+    renderButton.setBounds (header.removeFromRight (96).reduced (0, 6));
+    header.removeFromRight (8);
+    playButton.setBounds (header.removeFromRight (104).reduced (0, 6));
     header.removeFromRight (12);
-    bpmLabel.setBounds (header.removeFromRight (150));
+    bpmLabel.setBounds (header.removeFromRight (140));
     statusLabel.setBounds (header);
     bounds.removeFromTop (8);
 
-    // Waveform in basso
-    auto bottom = bounds.removeFromBottom (170);
+    // Editor delle sillabe in basso
+    auto bottom = bounds.removeFromBottom (206);
     dragHint.setBounds (bottom.removeFromBottom (16));
-    waveform.setBounds (bottom.withTrimmedBottom (2));
+    waveform.setBounds (bottom.withTrimmedBottom (4));
     bounds.removeFromBottom (10);
 
     const int gap = 12;
-    auto col1 = bounds.removeFromLeft (372);
+    auto col1 = bounds.removeFromLeft (380);
     bounds.removeFromLeft (gap);
-    auto col2 = bounds.removeFromLeft (360);
+    auto col2 = bounds.removeFromLeft (372);
     bounds.removeFromLeft (gap);
     auto col3 = bounds;
 
-    // ---- Colonna 1: Testo + Voce
-    textPanel.setBounds (col1.removeFromTop (210));
+    auto comboRow = [] (juce::Rectangle<int> row, juce::Array<Combo*> cs)
     {
-        auto c = textPanel.getBounds().reduced (12).withTrimmedTop (22);
-        auto langRow = c.removeFromBottom (26);
-        languageCombo->label.setBounds (langRow.removeFromLeft (60));
-        languageCombo->box.setBounds (langRow.removeFromLeft (150));
-        hintLabel.setBounds (langRow.withTrimmedLeft (6));
-        c.removeFromBottom (6);
-        textEditor.setBounds (c);
-    }
-    col1.removeFromTop (gap);
-    voicePanel.setBounds (col1);
-    {
-        auto c = voicePanel.getBounds().reduced (12).withTrimmedTop (24);
-        auto typeRow = c.removeFromTop (32);
-        const int bw = (typeRow.getWidth() - 12) / 3;
-        maleButton.setBounds (typeRow.removeFromLeft (bw));
-        typeRow.removeFromLeft (6);
-        femaleButton.setBounds (typeRow.removeFromLeft (bw));
-        typeRow.removeFromLeft (6);
-        robotButton.setBounds (typeRow);
-        c.removeFromTop (8);
-        auto tRow = c.removeFromTop (26);
-        timbreLabel.setBounds (tRow.removeFromLeft (60));
-        timbreBox.setBounds (tRow);
-        c.removeFromTop (6);
-        layoutKnobs (c, { pitchK, intonK, speedK, formantK, robotK, robotHzK }, 3, c.getHeight() / 2);
-    }
-
-    // ---- Colonna 2: Ritmo + Riproduzione
-    playPanel.setBounds (col2.removeFromBottom (112));
-    col2.removeFromBottom (gap);
-    rhythmPanel.setBounds (col2);
-    {
-        auto c = rhythmPanel.getBounds().reduced (12).withTrimmedTop (24);
-        auto row = c.removeFromTop (40);
-        const int cw = (row.getWidth() - 12) / 3;
-        for (auto* cb : { modeCombo, divCombo, bpmSrcCombo })
+        const int cw = (row.getWidth() - 6 * (cs.size() - 1)) / juce::jmax (1, cs.size());
+        for (auto* cb : cs)
         {
             auto cell = row.removeFromLeft (cw);
             cb->label.setBounds (cell.removeFromTop (14));
             cb->box.setBounds (cell.withHeight (24));
             row.removeFromLeft (6);
         }
+    };
+
+    // ---- Colonna 1: Testo + Voce
+    textPanel.setBounds (col1.removeFromTop (196));
+    {
+        auto c = textPanel.getBounds().reduced (12).withTrimmedTop (22);
+        auto langRow = c.removeFromBottom (26);
+        languageCombo->label.setBounds (langRow.removeFromLeft (56));
+        languageCombo->box.setBounds (langRow.removeFromLeft (150));
+        langRow.removeFromLeft (8);
+        dictButton.setBounds (langRow.removeFromLeft (110));
+        hintLabel.setBounds (langRow.withTrimmedLeft (6));
+        c.removeFromBottom (6);
+        textEditor.setBounds (c);
+    }
+    hintLabel.setVisible (false);
+    col1.removeFromTop (gap);
+    voicePanel.setBounds (col1);
+    {
+        auto c = voicePanel.getBounds().reduced (12).withTrimmedTop (24);
+        auto typeRow = c.removeFromTop (30);
+        const int bw = (typeRow.getWidth() - 6) / 2;
+        neuralButton.setBounds (typeRow.removeFromLeft (bw));
+        typeRow.removeFromLeft (6);
+        robotButton.setBounds (typeRow);
+        c.removeFromTop (6);
+        auto row1 = c.removeFromTop (40);
+        comboRow (row1, { voiceACombo });
+        comboRow (row1, { robotVarCombo });
+        c.removeFromTop (2);
+        comboRow (c.removeFromTop (40), { voiceBCombo });
         c.removeFromTop (4);
-        layoutKnobs (c.removeFromTop (180), { stepsK, swingK, legatoK, grooveK, accentK, bpmK }, 3, 90);
-        stretchToggle->setBounds (c.removeFromTop (24));
+        layoutKnobs (c, { blendK, speedK, pitchK, intonK, formantK, robotK, robotHzK }, 4, c.getHeight() / 2);
+    }
+
+    // ---- Colonna 2: Ritmo + Riproduzione
+    playPanel.setBounds (col2.removeFromBottom (122));
+    col2.removeFromBottom (gap);
+    rhythmPanel.setBounds (col2);
+    {
+        auto c = rhythmPanel.getBounds().reduced (12).withTrimmedTop (24);
+        comboRow (c.removeFromTop (40), { modeCombo, divCombo, bpmSrcCombo, stretchCombo });
+        c.removeFromTop (4);
+        layoutKnobs (c.removeFromTop (172), { stepsK, swingK, legatoK, pcK, grooveK, accentK, bpmK }, 4, 86);
         c.removeFromTop (6);
         grooveView.setBounds (c);
     }
     {
         auto c = playPanel.getBounds().reduced (12).withTrimmedTop (24);
-        auto r1 = c.removeFromTop (26);
-        playModeCombo->label.setBounds (r1.removeFromLeft (76));
-        playModeCombo->box.setBounds (r1.removeFromLeft (140));
-        r1.removeFromLeft (12);
-        loopToggle->setBounds (r1);
-        c.removeFromTop (8);
+        comboRow (c.removeFromTop (40), { playModeCombo, loudCombo });
+        c.removeFromTop (6);
         auto r2 = c.removeFromTop (26);
-        startBarLabel.setBounds (r2.removeFromLeft (150));
-        startBarSlider.setBounds (r2.removeFromLeft (130));
+        startBarLabel.setBounds (r2.removeFromLeft (112));
+        startBarSlider.setBounds (r2.removeFromLeft (120));
+        r2.removeFromLeft (16);
+        loopToggle->setBounds (r2);
     }
 
     // ---- Colonna 3: Effetti
@@ -394,7 +437,7 @@ void VocalisEditor::resized()
     {
         auto c = fxPanel.getBounds().reduced (12).withTrimmedTop (22);
         const int rows = fxRows.size() + 1;
-        const int rowH = juce::jmin (62, c.getHeight() / rows);
+        const int rowH = juce::jmin (56, c.getHeight() / rows);
         juce::ComboBox* delayDivBox = nullptr;
         for (auto* cb : combos)
             if (cb->label.getText() == "TEMPO") { delayDivBox = &cb->box; cb->label.setVisible (false); }
@@ -403,12 +446,10 @@ void VocalisEditor::resized()
         {
             auto row = c.removeFromTop (rowH);
             auto* fx = fxRows[i];
-            fx->toggle.setBounds (row.removeFromLeft (128).withSizeKeepingCentre (128, 24));
+            fx->toggle.setBounds (row.removeFromLeft (124).withSizeKeepingCentre (124, 24));
             if (fx->toggle.getButtonText() == "Delay" && delayDivBox != nullptr)
-            {
-                delayDivBox->setBounds (row.removeFromLeft (72).withSizeKeepingCentre (68, 24));
-            }
-            const int kw = 72;
+                delayDivBox->setBounds (row.removeFromLeft (72).withSizeKeepingCentre (66, 24));
+            const int kw = 70;
             for (auto* k : fx->knobs)
             {
                 auto cell = row.removeFromLeft (kw);
@@ -417,10 +458,11 @@ void VocalisEditor::resized()
             }
         }
         auto last = c.removeFromTop (rowH);
-        last.removeFromLeft (128);
-        outGainK->label.setBounds (last.removeFromLeft (72).removeFromTop (14));
+        limiterToggle->setBounds (last.removeFromLeft (124).withSizeKeepingCentre (124, 24));
+        auto cell = last.removeFromLeft (70);
+        outGainK->label.setBounds (cell.removeFromTop (14));
         outGainK->slider.setTextBoxStyle (juce::Slider::NoTextBox, false, 0, 0);
-        outGainK->slider.setBounds (juce::Rectangle<int> (outGainK->label.getX(), last.getY() + 14, 72, rowH - 14));
+        outGainK->slider.setBounds (cell);
     }
 }
 

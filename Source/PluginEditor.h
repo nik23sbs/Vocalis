@@ -1,7 +1,7 @@
 #pragma once
 #include "PluginProcessor.h"
 #include "UI/VocalisLookAndFeel.h"
-#include "UI/WaveformView.h"
+#include "UI/SyllableEditor.h"
 #include "UI/GrooveView.h"
 
 class VocalisEditor : public juce::AudioProcessorEditor,
@@ -48,8 +48,9 @@ private:
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void timerCallback() override;
-    void setVoiceType (int t);
-    void updateVoiceTypeUI();
+    void setEngine (int e);
+    void updateEngineUI();
+    void showDictionary();
     void layoutKnobs (juce::Rectangle<int> area, juce::Array<Knob*> knobs, int cols, int rowH);
     void exportWav();
 
@@ -69,17 +70,15 @@ private:
     juce::Label hintLabel;
     Combo* languageCombo = nullptr;
 
-    juce::TextButton maleButton { "UOMO" }, femaleButton { "DONNA" }, robotButton { "ROBOT" };
-    juce::ComboBox timbreBox;
-    juce::Label timbreLabel;
-    std::unique_ptr<ComboAtt> timbreAtt;
-    int shownVoiceType = -1;
+    juce::TextButton neuralButton { "NEURALE" }, robotButton { "ROBOT" }, dictButton { "DIZIONARIO" };
+    Combo *voiceACombo, *voiceBCombo, *robotVarCombo, *stretchCombo, *loudCombo;
+    int shownEngine = -1;
 
-    Knob *pitchK, *intonK, *speedK, *formantK, *robotK, *robotHzK;
+    Knob *blendK, *pitchK, *intonK, *speedK, *formantK, *robotK, *robotHzK;
     Combo *modeCombo, *divCombo, *bpmSrcCombo, *playModeCombo;
-    Knob *stepsK, *swingK, *legatoK, *grooveK, *accentK, *bpmK;
-    juce::ToggleButton* stretchToggle = nullptr;
+    Knob *stepsK, *swingK, *legatoK, *pcK, *grooveK, *accentK, *bpmK;
     juce::ToggleButton* loopToggle = nullptr;
+    juce::ToggleButton* limiterToggle = nullptr;
     juce::Slider startBarSlider { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };
     juce::Label startBarLabel;
     std::unique_ptr<SliderAtt> startBarAtt;
@@ -87,7 +86,8 @@ private:
     Knob* outGainK = nullptr;
 
     vocalis::GrooveView grooveView;
-    vocalis::WaveformView waveform;
+    vocalis::SyllableEditor waveform;
+    vocalis::DragOutHandle dragHandle;
 
     juce::TextButton playButton { "ANTEPRIMA" }, renderButton { "RIGENERA" }, exportButton { "ESPORTA WAV" };
     juce::Label statusLabel, bpmLabel, dragHint;

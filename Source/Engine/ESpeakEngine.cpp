@@ -1,7 +1,7 @@
 #include "ESpeakEngine.h"
+#include "ESpeakCore.h"
 #include "Syllabifier.h"
 #include <espeak-ng/speak_lib.h>
-#include <mutex>
 #include <cmath>
 
 namespace vocalis
@@ -9,35 +9,6 @@ namespace vocalis
 
 namespace
 {
-    std::mutex& espeakMutex() { static std::mutex m; return m; }
-    bool g_initialised = false;
-    int  g_sampleRate = 22050;
-
-    // Copia della tabella interna di eSpeak (wavegen.c): moltiplicatore del pitch = tab[p] / 128
-    const unsigned char pitchAdjustTab[101] = {
-         64,  65,  66,  67,  68,  69,  70,  71,  72,  73,  74,  75,  76,  77,  78,  79,
-         80,  81,  82,  83,  84,  86,  87,  88,  89,  91,  92,  93,  94,  96,  97,  98,
-        100, 101, 103, 104, 105, 107, 108, 110, 111, 113, 115, 116, 118, 119, 121, 123,
-        124, 126, 128, 130, 132, 133, 135, 137, 139, 141, 143, 145, 147, 149, 151, 153,
-        155, 158, 160, 162, 164, 167, 169, 171, 174, 176, 179, 181, 184, 186, 189, 191,
-        194, 197, 199, 202, 205, 208, 211, 214, 217, 220, 223, 226, 229, 232, 236, 239,
-        242, 246, 249, 252, 254 };
-
-    /** Trova il parametro pitch eSpeak che dà (moltiplicatore di p) * ratio. */
-    int compensatePitch (int p, double ratio)
-    {
-        p = juce::jlimit (0, 100, p);
-        const double target = pitchAdjustTab[p] * ratio;
-        int best = 0;
-        double bestErr = 1e9;
-        for (int i = 0; i <= 100; ++i)
-        {
-            const double err = std::abs (pitchAdjustTab[i] - target);
-            if (err < bestErr) { bestErr = err; best = i; }
-        }
-        return best;
-    }
-
     struct Collector
     {
         std::vector<short> samples;
@@ -49,11 +20,9 @@ namespace
     {
         if (events == nullptr)
             return 0;
-
         auto* c = static_cast<Collector*> (events->user_data);
         if (c == nullptr)
             return 0;
-
         if (wav != nullptr && numSamples > 0)
             c->samples.insert (c->samples.end(), wav, wav + numSamples);
 
@@ -66,77 +35,22 @@ namespace
                 c->phonemeEvents.emplace_back (e->audio_position, juce::String::fromUTF8 (name));
             }
             else if (e->type == espeakEVENT_WORD)
-            {
                 c->wordEvents.push_back (e->audio_position);
-            }
         }
         return 0;
     }
 }
 
-ESpeakEngine::ESpeakEngine (juce::File dataParent)
+ESpeakEngine::ESpeakEngine()
 {
-    std::lock_guard<std::mutex> lock (espeakMutex());
-
-    if (g_initialised)
-    {
-        ready = true;
-        engineSampleRate = g_sampleRate;
-        return;
-    }
-
-    if (dataParent == juce::File())
-        dataParent = findDataParent();
-
-    if (! dataParent.getChildFile ("espeak-ng-data").getChildFile ("phontab").existsAsFile())
-    {
-        initError = "Dati eSpeak non trovati (espeak-ng-data). Cercati in: " + dataParent.getFullPathName();
-        return;
-    }
-
-    const auto path = dataParent.getFullPathName().toStdString();
-    const int sr = espeak_Initialize (AUDIO_OUTPUT_SYNCHRONOUS, 0, path.c_str(),
-                                      espeakINITIALIZE_PHONEME_EVENTS | espeakINITIALIZE_PHONEME_IPA
-                                          | espeakINITIALIZE_DONT_EXIT);
-    if (sr <= 0)
-    {
-        initError = "Inizializzazione eSpeak fallita";
-        return;
-    }
-
-    espeak_SetSynthCallback (synthCallback);
-    g_sampleRate = engineSampleRate = sr;
-    g_initialised = ready = true;
-}
-
-juce::File ESpeakEngine::findDataParent()
-{
-    auto check = [] (const juce::File& f) { return f.getChildFile ("espeak-ng-data").getChildFile ("phontab").existsAsFile(); };
-
-    // Binario del plugin: <bundle>/Contents/MacOS/Vocalis  oppure  <bundle>/Contents/x86_64-linux/Vocalis.so
-    const auto exe = juce::File::getSpecialLocation (juce::File::currentExecutableFile);
-    juce::Array<juce::File> candidates {
-        exe.getParentDirectory().getParentDirectory().getChildFile ("Resources"),
-        exe.getParentDirectory().getChildFile ("Resources"),
-        exe.getParentDirectory(),
-        juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory).getChildFile ("Vocalis"),
-        juce::File::getSpecialLocation (juce::File::commonApplicationDataDirectory).getChildFile ("Vocalis"),
-    };
-
-    if (auto env = juce::SystemStats::getEnvironmentVariable ("VOCALIS_ESPEAK_DATA", {}); env.isNotEmpty())
-        candidates.insert (0, juce::File (env));
-
-    for (auto& c : candidates)
-        if (check (c))
-            return c;
-
-    return candidates.getFirst();
+    ready = ESpeakCore::ensureInitialised (initError);
 }
 
 SynthResult ESpeakEngine::synthesize (const juce::String& rawText, const VoiceSettings& s)
 {
     SynthResult result;
-    result.sampleRate = engineSampleRate;
+    result.sampleRate = ESpeakCore::sampleRate();
+    result.engineName = "eSpeak";
 
     if (! ready)
     {
@@ -144,42 +58,43 @@ SynthResult ESpeakEngine::synthesize (const juce::String& rawText, const VoiceSe
         return result;
     }
 
+    // il dizionario funziona anche qui (solo le riscritture, l'IPA non si applica a eSpeak)
     auto text = rawText.replaceCharacters ("<>", "  ").trim();
+    for (auto line : juce::StringArray::fromLines (s.dictionary))
+    {
+        const int eq = line.indexOfChar ('=');
+        if (eq <= 0) continue;
+        const auto key = line.substring (0, eq).trim(), val = line.substring (eq + 1).trim();
+        if (key.isNotEmpty() && val.isNotEmpty() && ! val.startsWithChar ('/'))
+            text = text.replace (key, val, true);
+    }
     if (text.isEmpty())
     {
         result.error = "Testo vuoto";
         return result;
     }
 
-    // Formanti: l'audio verra' ricampionato di "f"; pre-compensiamo velocita' e pitch.
-    const double f = juce::jlimit (0.6, 1.6, (double) s.formant);
-    const bool shiftFormants = std::abs (f - 1.0) > 0.005;
-
     Collector collector;
     {
-        std::lock_guard<std::mutex> lock (espeakMutex());
+        std::lock_guard<std::mutex> lock (ESpeakCore::mutex());
+        espeak_SetSynthCallback (synthCallback);
 
-        const auto voiceName = (s.language + "+" + s.variant).toStdString();
-        if (espeak_SetVoiceByName (voiceName.c_str()) != EE_OK)
+        const auto voiceName = (s.language + "+" + s.espeakVariant).toStdString();
+        if (espeak_SetVoiceByName (voiceName.c_str()) != EE_OK && espeak_SetVoiceByName (s.language.toRawUTF8()) != EE_OK)
         {
-            if (espeak_SetVoiceByName (s.language.toRawUTF8()) != EE_OK)
-            {
-                result.error = "Voce non disponibile: " + juce::String (voiceName);
-                return result;
-            }
+            result.error = "Voce non disponibile: " + juce::String (voiceName);
+            return result;
         }
 
-        const int rate = juce::jlimit (espeakRATE_MINIMUM, espeakRATE_MAXIMUM, (int) std::round (s.rate / f));
-        espeak_SetParameter (espeakRATE, rate, 0);
-        espeak_SetParameter (espeakPITCH, shiftFormants ? compensatePitch (s.pitch, 1.0 / f) : juce::jlimit (0, 99, s.pitch), 0);
-        espeak_SetParameter (espeakRANGE, juce::jlimit (0, 99, s.range), 0);
+        espeak_SetParameter (espeakRATE, juce::jlimit (espeakRATE_MINIMUM, espeakRATE_MAXIMUM, s.espeakRate), 0);
+        espeak_SetParameter (espeakPITCH, juce::jlimit (0, 99, s.espeakPitch), 0);
+        espeak_SetParameter (espeakRANGE, 50, 0);
         espeak_SetParameter (espeakVOLUME, 100, 0);
 
         const auto utf8 = text.toStdString();
         const auto err = espeak_Synth (utf8.c_str(), utf8.size() + 1, 0, POS_CHARACTER, 0,
                                        espeakCHARS_UTF8, nullptr, &collector);
         espeak_Synchronize();
-
         if (err != EE_OK)
         {
             result.error = "Errore di sintesi eSpeak";
@@ -193,21 +108,18 @@ SynthResult ESpeakEngine::synthesize (const juce::String& rawText, const VoiceSe
         return result;
     }
 
-    // --- PCM -> float
     const int n = (int) collector.samples.size();
-    juce::AudioBuffer<float> raw (1, n);
+    result.audio.setSize (1, n);
     for (int i = 0; i < n; ++i)
-        raw.setSample (0, i, collector.samples[(size_t) i] / 32768.0f);
+        result.audio.setSample (0, i, collector.samples[(size_t) i] / 32768.0f);
 
-    const double msToSamples = engineSampleRate / 1000.0;
-
-    // --- Fonemi
+    const double msToSamples = result.sampleRate / 1000.0;
     std::vector<Phoneme> phonemes;
-    for (size_t i = 0; i < collector.phonemeEvents.size(); ++i)
+    for (auto& [ms, name] : collector.phonemeEvents)
     {
         Phoneme p;
-        p.name = collector.phonemeEvents[i].second;
-        p.start = juce::jlimit (0, n, (int) std::round (collector.phonemeEvents[i].first * msToSamples));
+        p.name = name;
+        p.start = juce::jlimit (0, n, (int) std::round (ms * msToSamples));
         phonemes.push_back (p);
     }
     std::stable_sort (phonemes.begin(), phonemes.end(), [] (auto& a, auto& b) { return a.start < b.start; });
@@ -218,34 +130,21 @@ SynthResult ESpeakEngine::synthesize (const juce::String& rawText, const VoiceSe
         phonemes[i].isVowel = ! phonemes[i].isPause && Syllabifier::isVowelName (phonemes[i].name);
     }
 
-    std::vector<int> words;
+    // eventi parola: arrivano un po' in anticipo -> primo fonema che parte da li' in poi
+    const int tol = (int) (0.003 * result.sampleRate);
     for (auto ms : collector.wordEvents)
-        words.push_back (juce::jlimit (0, n, (int) std::round (ms * msToSamples)));
-
-    // --- Ricampionamento per le formanti
-    if (shiftFormants)
     {
-        const int outN = (int) std::floor (n / f);
-        juce::AudioBuffer<float> padded (1, n + 64);
-        padded.clear();
-        padded.copyFrom (0, 0, raw, 0, 0, n);
-
-        result.audio.setSize (1, outN);
-        juce::WindowedSincInterpolator interp;
-        interp.process (f, padded.getReadPointer (0), result.audio.getWritePointer (0), outN);
-
-        auto scale = [f, outN] (int x) { return juce::jlimit (0, outN, (int) std::round (x / f)); };
-        for (auto& p : phonemes) { p.start = scale (p.start); p.end = scale (p.end); }
-        for (auto& w : words) w = scale (w);
-    }
-    else
-    {
-        result.audio = std::move (raw);
+        const int ws = (int) std::round (ms * msToSamples);
+        for (auto& p : phonemes)
+            if (! p.isPause && p.start >= ws - tol)
+            {
+                if (p.start - ws < (int) (0.08 * result.sampleRate)) p.wordStart = true;
+                break;
+            }
     }
 
     result.phonemes = std::move (phonemes);
-    result.wordStarts = std::move (words);
-    result.syllables = Syllabifier::build (result.phonemes, result.wordStarts, result.audio, result.sampleRate);
+    result.syllables = Syllabifier::build (result.phonemes, result.audio, result.sampleRate);
     return result;
 }
 

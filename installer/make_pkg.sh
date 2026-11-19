@@ -1,8 +1,9 @@
 #!/bin/bash
 # Crea l'installer macOS di Vocalis: dist/Vocalis-<versione>-macOS.pkg
-# Uso: installer/make_pkg.sh <cartella artefatti Release>
+# Uso: installer/make_pkg.sh <cartella artefatti Release> <cartella modelli (kokoro-v1.0.onnx, voices-v1.0.bin)>
 set -euo pipefail
 ART="$1"
+MODELS="$2"
 cd "$(dirname "$0")/.."
 VERSION=$(grep -Eo 'project\(Vocalis VERSION [0-9.]+' CMakeLists.txt | awk '{print $3}')
 WORK=$(mktemp -d)
@@ -39,6 +40,12 @@ PLIST
 component vst3 "$ART/VST3/Vocalis.vst3"         /Library/Audio/Plug-Ins/VST3
 component au   "$ART/AU/Vocalis.component"      /Library/Audio/Plug-Ins/Components installer/scripts-au
 component app  "$ART/Standalone/Vocalis.app"    /Applications
+
+# Modello neurale condiviso da VST3, AU e app (un'unica copia, ~350 MB)
+MROOT="$WORK/root-models/Library/Application Support/Vocalis/models"
+mkdir -p "$MROOT"
+cp "$MODELS/kokoro-v1.0.onnx" "$MODELS/voices-v1.0.bin" "$MROOT/"
+pkgbuild --root "$WORK/root-models" --identifier com.vocalis.models --version "$VERSION" --install-location / "$WORK/models.pkg"
 
 sed "s/@VERSION@/$VERSION/g" installer/Distribution.xml > "$WORK/Distribution.xml"
 productbuild --distribution "$WORK/Distribution.xml" --resources installer/resources \

@@ -1,4 +1,4 @@
-# Vocalis — da testo a vocal (VST3 / AU)
+# Vocalis 2 — da testo a vocal (VST3 / AU)
 
 Scrivi un testo, scegli la voce (Uomo, Donna o Robot), modulala, mettila a tempo sul groove
 di un loop, aggiungi gli effetti ed esporta in WAV oppure trascinala nella DAW.
@@ -17,18 +17,31 @@ di un loop, aggiungi gli effetti ed esporta in WAV oppure trascinala nella DAW.
    ```
 4. **Compila e installa Vocalis**: scompatta lo zip, poi trascina la cartella `Vocalis` nel Terminale dopo aver scritto `cd ` e premi Invio. Infine:
    ```
-   ./scripts/build_mac.sh
+   ./scripts/build_mac.sh   # scarica anche ONNX Runtime e il modello neurale (~350 MB)
    ```
    La prima volta impiega 5–10 minuti (scarica JUCE ed eSpeak e compila tutto).
 5. **Apri la DAW** e fai una nuova scansione dei plugin. Vocalis è uno **strumento**: in Ableton Live
    lo trovi in *Plug-in → Vocalis* e va messo su una traccia MIDI.
+
+## Novita' della versione 2
+
+- **Voce neurale Kokoro**: Sara e Nicola in italiano + oltre 40 voci in altre lingue, **miscelabili** tra loro.
+- **Tempi precisi**: le durate dei fonemi arrivano dal modello e i tagli vengono rifiniti sull'audio.
+- **La vocale cade sulla griglia** (controllo *Attacco*), come canta un cantante vero.
+- **Stretch solo sulle vocali**: consonanti nitide anche a tempi lenti.
+- **Pitch, intonazione e formanti** con il vocoder WORLD (qualita' molto superiore).
+- **Editor delle sillabe**: sposta, allunga, intona, alza/abbassa o muta ogni sillaba.
+- **Dizionario di pronuncia** (`parola = come si legge` oppure `parola = /ipa/`).
+- **Catena da studio**: de-esser, doubler, loudness in LUFS, limiter finale.
+- Voci robot/formant (eSpeak) sempre disponibili con il pulsante *ROBOT*.
 
 ## Come si usa
 
 | Sezione | Cosa fa |
 |---|---|
 | **Testo** | Scrivi il testo; virgole e punti diventano pause a tempo. Lingua: italiano di default, più altre 13. |
-| **Voce** | Uomo / Donna / Robot, ognuna con diversi timbri. Pitch, intonazione (0 = monotona), velocità, formanti (timbro più "grande" o più "piccolo" senza cambiare l'intonazione), robotizza + Robot Hz. |
+| **Voce** | *Neurale* (Kokoro) o *Robot* (eSpeak). Voce + seconda voce da miscelare, velocita', pitch (semitoni), intonazione (0% = monotona), formanti, robotizza + Robot Hz. |
+| **Editor sillabe** | Trascina = sposta, bordo destro = durata, Shift + su/giu' = intonazione, rotella = volume, doppio clic = muta, tasto destro = menu. |
 | **Ritmo e groove** | *Griglia*: ogni sillaba parte su uno step (1/4 … 1/32, terzine). Swing, legato, step per sillaba, "Adatta allo step" (stira/accorcia le sillabe). *Libera*: voce naturale. |
 | **Groove da sample** | Trascina un loop (wav/aif/flac/mp3) nel riquadro: Vocalis rileva i colpi e sposta le sillabe con lo stesso micro-timing e gli stessi accenti. *Groove* = quanto lo segue, *Accenti* = quanto il volume segue i colpi. |
 | **Riproduzione** | *Sync DAW*: suona a tempo con la DAW a partire dalla battuta scelta (con loop opzionale). *Trigger MIDI*: ogni nota fa ripartire il vocal. |

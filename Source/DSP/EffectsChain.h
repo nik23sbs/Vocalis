@@ -15,13 +15,16 @@ struct EffectsParams
     bool chorusOn = false;  float chorusRate = 0.8f, chorusDepth = 0.3f, chorusMix = 0.4f;
     bool delayOn = false;   int delayDiv = 1; float delayFeedback = 0.35f, delayMix = 0.25f;
     bool reverbOn = false;  float reverbSize = 0.5f, reverbDamp = 0.5f, reverbMix = 0.25f;
+    bool deessOn = true;    float deessAmount = 0.4f;            // 0..1
+    bool doublerOn = false; float doublerMix = 0.35f, doublerWidth = 0.8f;
     float outGainDb = 0.0f;
+    bool limiterOn = true;  float limiterCeilingDb = -0.3f;
 
     static juce::StringArray delayDivisionNames();
     static double delayDivisionBeats (int i);
 };
 
-/** Catena effetti stereo: Ring mod -> Distorsione -> Bitcrusher -> EQ -> Compressore -> Chorus -> Delay -> Riverbero.
+/** Catena effetti stereo: De-esser -> Ring mod -> Distorsione -> Bitcrusher -> EQ -> Compressore -> Doubler -> Chorus -> Delay -> Riverbero.
     Usata sia in tempo reale (processBlock) sia offline (export WAV). */
 class EffectsChain
 {
@@ -47,6 +50,18 @@ private:
     juce::dsp::Compressor<float> compressor;
     juce::dsp::Chorus<float> chorus;
     juce::dsp::Reverb reverb;
+
+    // De-esser: banda alta separata con crossover Linkwitz-Riley e ridotta quando le sibilanti superano la soglia
+    juce::dsp::LinkwitzRileyFilter<float> deessSplit;
+    float deessEnv = 0.0f, deessGain = 1.0f;
+    juce::AudioBuffer<float> deessHigh;
+
+    // Doubler: due copie ritardate (12/19 ms) con modulazione lenta, aperte a sinistra e destra
+    juce::AudioBuffer<float> dblBuf;
+    int dblWrite = 0;
+    double dblPhase1 = 0.0, dblPhase2 = 0.25;
+
+    float limGain = 1.0f;
 
     juce::AudioBuffer<float> delayBuf, scratch;
     int delayWrite = 0;

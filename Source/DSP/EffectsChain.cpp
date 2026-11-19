@@ -43,6 +43,12 @@ void EffectsChain::prepare (double sampleRate, int maxBlockSize)
     chorus.setCentreDelay (7.0f);
     reverb.prepare (spec);
 
+    deessSplit.prepare (spec);
+    deessSplit.setType (juce::dsp::LinkwitzRileyFilterType::lowpass);
+    deessSplit.setCutoffFrequency (juce::jmin (5500.0f, (float) (sr * 0.4)));
+    deessHigh.setSize (2, maxBlock);
+    dblBuf.setSize (2, (int) (sr * 0.05) + 2);
+
     delayBuf.setSize (2, (int) (sr * 4.5) + 1);
     scratch.setSize (2, maxBlock);
     delaySamples.reset (sr, 0.05);
@@ -58,6 +64,11 @@ void EffectsChain::reset()
     compressor.reset(); chorus.reset(); reverb.reset();
     delayBuf.clear();
     delayWrite = 0;
+    deessSplit.reset();
+    deessEnv = 0.0f; deessGain = 1.0f;
+    limGain = 1.0f;
+    dblBuf.clear();
+    dblWrite = 0;
 }
 
 double EffectsChain::tailSeconds (const EffectsParams& p, double bpm)
@@ -91,6 +102,30 @@ void EffectsChain::process (juce::AudioBuffer<float>& buffer, const EffectsParam
             process (view, p, bpm);
         }
         return;
+    }
+
+    // --- De-esser (prima di tutto: le sibilanti non devono arrivare a distorsione e compressore)
+    if (p.deessOn && p.deessAmount > 0.001f)
+    {
+        const float thr = juce::Decibels::decibelsToGain (-18.0f - 22.0f * p.deessAmount);   // soglia sulla banda alta
+        const float att = std::exp (-1.0f / (float) (0.0008 * sr)), rel = std::exp (-1.0f / (float) (0.06 * sr));
+        for (int i = 0; i < n; ++i)
+        {
+            float hiPeak = 0.0f;
+            float lows[2] = {}, highs[2] = {};
+            for (int c = 0; c < numCh; ++c)
+            {
+                const float x = buffer.getSample (c, i);
+                lows[c] = deessSplit.processSample (c, x);
+                highs[c] = x - lows[c];
+                hiPeak = juce::jmax (hiPeak, std::abs (highs[c]));
+            }
+            deessEnv = hiPeak > deessEnv ? att * deessEnv + (1.0f - att) * hiPeak : rel * deessEnv + (1.0f - rel) * hiPeak;
+            const float target = deessEnv > thr ? std::pow (thr / deessEnv, 0.5f + p.deessAmount * 0.4f) : 1.0f;
+            deessGain = target < deessGain ? target : deessGain + (target - deessGain) * 0.002f;
+            for (int c = 0; c < numCh; ++c)
+                buffer.setSample (c, i, lows[c] + highs[c] * deessGain);
+        }
     }
 
     // --- Ring modulator
@@ -177,6 +212,36 @@ void EffectsChain::process (juce::AudioBuffer<float>& buffer, const EffectsParam
         buffer.applyGain (0, n, makeup);
     }
 
+    // --- Doubler
+    if (p.doublerOn)
+    {
+        const int len = dblBuf.getNumSamples();
+        const double inc1 = juce::MathConstants<double>::twoPi * 0.31 / sr, inc2 = juce::MathConstants<double>::twoPi * 0.43 / sr;
+        for (int i = 0; i < n; ++i)
+        {
+            const float inL = buffer.getSample (0, i), inR = numCh > 1 ? buffer.getSample (1, i) : inL;
+            dblBuf.setSample (0, dblWrite, 0.5f * (inL + inR));
+            const float d1 = (float) ((0.012 + 0.0015 * std::sin (dblPhase1)) * sr);
+            const float d2 = (float) ((0.019 + 0.0015 * std::sin (dblPhase2)) * sr);
+            dblPhase1 = std::fmod (dblPhase1 + inc1, juce::MathConstants<double>::twoPi);
+            dblPhase2 = std::fmod (dblPhase2 + inc2, juce::MathConstants<double>::twoPi);
+            auto readAt = [&] (float delay)
+            {
+                float rp = (float) dblWrite - delay;
+                while (rp < 0) rp += (float) len;
+                const int a = (int) rp % len, b = (a + 1) % len;
+                const float fr = rp - std::floor (rp);
+                return dblBuf.getSample (0, a) * (1.0f - fr) + dblBuf.getSample (0, b) * fr;
+            };
+            const float v1 = readAt (d1), v2 = readAt (d2);
+            dblWrite = (dblWrite + 1) % len;
+            const float w = p.doublerWidth;
+            buffer.setSample (0, i, inL + p.doublerMix * (v1 * (0.5f + 0.5f * w) + v2 * (0.5f - 0.5f * w)));
+            if (numCh > 1)
+                buffer.setSample (1, i, inR + p.doublerMix * (v2 * (0.5f + 0.5f * w) + v1 * (0.5f - 0.5f * w)));
+        }
+    }
+
     // --- Chorus
     if (p.chorusOn)
     {
@@ -243,6 +308,21 @@ void EffectsChain::process (juce::AudioBuffer<float>& buffer, const EffectsParam
     }
 
     buffer.applyGain (0, n, juce::Decibels::decibelsToGain (p.outGainDb));
+
+    // --- Limiter finale: attacco istantaneo, rilascio 120 ms, tetto regolabile (niente clip in uscita)
+    if (p.limiterOn)
+    {
+        const float ceiling = juce::Decibels::decibelsToGain (p.limiterCeilingDb);
+        const float rel = 1.0f - std::exp (-1.0f / (float) (0.12 * sr));
+        for (int i = 0; i < n; ++i)
+        {
+            float pk = 0.0f;
+            for (int c = 0; c < numCh; ++c) pk = juce::jmax (pk, std::abs (buffer.getSample (c, i)));
+            const float need = pk * limGain > ceiling ? ceiling / pk : 1.0f;
+            limGain = need < limGain ? need : limGain + (juce::jmin (1.0f, need) - limGain) * rel;
+            for (int c = 0; c < numCh; ++c) buffer.setSample (c, i, buffer.getSample (c, i) * limGain);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- Robotize

@@ -2,14 +2,16 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "Render/Renderer.h"
 #include "DSP/EffectsChain.h"
+#include "Engine/KokoroVoices.h"
 
 namespace IDs
 {
     // Voce
-    inline constexpr const char* voiceType = "voiceType";
-    inline constexpr const char* varMale = "varMale";
-    inline constexpr const char* varFemale = "varFemale";
-    inline constexpr const char* varRobot = "varRobot";
+    inline constexpr const char* engine = "engine";
+    inline constexpr const char* voiceA = "voiceA";
+    inline constexpr const char* voiceB = "voiceB";
+    inline constexpr const char* blend = "blend";
+    inline constexpr const char* robotVariant = "robotVariant";
     inline constexpr const char* language = "language";
     inline constexpr const char* pitch = "pitch";
     inline constexpr const char* intonation = "intonation";
@@ -23,7 +25,9 @@ namespace IDs
     inline constexpr const char* stepsPerSyl = "stepsPerSyl";
     inline constexpr const char* swing = "swing";
     inline constexpr const char* legato = "legato";
-    inline constexpr const char* stretch = "stretch";
+    inline constexpr const char* stretch = "stretchMode";
+    inline constexpr const char* pCenter = "pCenter";
+    inline constexpr const char* loudness = "loudness";
     inline constexpr const char* grooveAmt = "grooveAmt";
     inline constexpr const char* accentAmt = "accentAmt";
     inline constexpr const char* bpmSource = "bpmSource";
@@ -42,6 +46,9 @@ namespace IDs
     inline constexpr const char* delayOn = "delayOn", *delayDiv = "delayDiv", *delayFb = "delayFb", *delayMix = "delayMix";
     inline constexpr const char* reverbOn = "reverbOn", *reverbSize = "reverbSize", *reverbDamp = "reverbDamp", *reverbMix = "reverbMix";
     inline constexpr const char* outGain = "outGain";
+    inline constexpr const char* deessOn = "deessOn", *deessAmount = "deessAmount";
+    inline constexpr const char* doublerOn = "doublerOn", *doublerMix = "doublerMix", *doublerWidth = "doublerWidth";
+    inline constexpr const char* limiterOn = "limiterOn";
 }
 
 class VocalisProcessor : public juce::AudioProcessor,
@@ -82,6 +89,15 @@ public:
     void setText (const juce::String& t);
     juce::String getText() const { return text; }
 
+    void setDictionary (const juce::String& d);
+    juce::String getDictionary() const { return dictionary; }
+
+    // Modifiche manuali delle sillabe (editor)
+    void setEdit (int index, const vocalis::SyllableEdit& e);
+    vocalis::SyllableEdit getEdit (int index) const;
+    void resetEdits();
+    bool hasEdits() const;
+
     bool loadGrooveFile (const juce::File& f, juce::String& error);
     void clearGroove();
     const vocalis::GrooveTemplate& getGroove() const { return groove; }
@@ -112,12 +128,16 @@ private:
     juce::String requestSignature() const;
     vocalis::EffectsParams readEffects() const;
     void setClip (vocalis::RenderedClip::Ptr c);
+    juce::String editsToString() const;
+    void editsFromString (const juce::String& s);
 
     std::shared_ptr<std::atomic<bool>> alive = std::make_shared<std::atomic<bool>> (true);
     vocalis::Renderer renderer;
     vocalis::EffectsChain effects;
 
     juce::String text { "Ciao, sono Vocalis. Scrivi il tuo testo qui e lo trasformo in voce a tempo." };
+    juce::String dictionary;
+    std::vector<vocalis::SyllableEdit> edits;
     vocalis::GrooveTemplate groove;
     int grooveVersion = 0;
 
