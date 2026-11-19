@@ -4,36 +4,28 @@
 set -e
 DEST="${1:-neural}"
 mkdir -p "$DEST/models"
-case "$(uname -s)" in
-  Darwin) PLATS="osx-universal2 osx-arm64" ;;
-  Linux)  PLATS="linux-x64" ;;
-esac
 if [ ! -d "$DEST/ort" ]; then
-  # Elenco reale degli asset delle ultime release (i nomi cambiano tra le versioni)
-  AUTH=()
-  [ -n "${GITHUB_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
-  curl -fsSL ${AUTH[@]+"${AUTH[@]}"} "https://api.github.com/repos/microsoft/onnxruntime/releases?per_page=15" -o "$DEST/releases.json"
-  URL=""
-  for PLAT in $PLATS; do
-    URL=$(python3 - "$DEST/releases.json" "$PLAT" <<'PY'
-import json, re, sys
-rel = json.load(open(sys.argv[1])); plat = sys.argv[2]
-pat = re.compile(r"^onnxruntime-" + re.escape(plat) + r"-(\d+\.\d+\.\d+)\.tgz$")
-for r in rel:
-    if r.get("prerelease") or r.get("draft"): continue
-    for a in r.get("assets", []):
-        if pat.match(a["name"]):
-            print(a["browser_download_url"]); sys.exit(0)
-PY
-)
-    [ -n "$URL" ] && break
-  done
-  [ -n "$URL" ] || { echo "Nessun pacchetto ONNX Runtime trovato per $PLATS"; python3 -c "import json;[print(r['tag_name'],[a['name'] for a in r['assets']][:12]) for r in json.load(open('$DEST/releases.json'))[:3]]"; exit 1; }
-  echo "Scarico $URL"
-  F=$(basename "$URL")
-  curl -fsSL -o "$DEST/$F" "$URL"
-  tar xzf "$DEST/$F" -C "$DEST" && rm "$DEST/$F"
-  mv "$DEST/${F%.tgz}" "$DEST/ort"
+  # Pacchetto ufficiale Microsoft.ML.OnnxRuntime da NuGet: header + librerie native per tutte le piattaforme.
+  # Serie 1.23 = ultima con binari macOS Intel (x86_64): unendola ad arm64 si ottiene una libreria universale.
+  IDX=$(curl -fsSL https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/index.json || true)
+  V=$(echo "$IDX" | grep -Eo '"1\.23\.[0-9]+"' | tr -d '"' | sort -t. -k3 -n | tail -1)
+  [ -n "$V" ] || V=1.23.2
+  echo "ONNX Runtime $V (NuGet)"
+  curl -fsSL -o "$DEST/ort.nupkg" "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/$V/microsoft.ml.onnxruntime.$V.nupkg"
+  rm -rf "$DEST/nupkg" && mkdir -p "$DEST/nupkg" && (cd "$DEST/nupkg" && unzip -q ../ort.nupkg)
+  mkdir -p "$DEST/ort/include" "$DEST/ort/lib"
+  cp "$DEST/nupkg/build/native/include/"*.h "$DEST/ort/include/"
+  case "$(uname -s)" in
+    Darwin)
+      lipo -create "$DEST/nupkg/runtimes/osx-arm64/native/libonnxruntime.dylib" \
+                   "$DEST/nupkg/runtimes/osx-x64/native/libonnxruntime.dylib" \
+           -output "$DEST/ort/lib/libonnxruntime.$V.dylib" 2>/dev/null \
+      || cp "$DEST/nupkg/runtimes/osx-arm64/native/libonnxruntime.dylib" "$DEST/ort/lib/libonnxruntime.$V.dylib"
+      lipo -info "$DEST/ort/lib/libonnxruntime.$V.dylib" ;;
+    Linux)
+      cp "$DEST/nupkg/runtimes/linux-x64/native/libonnxruntime.so" "$DEST/ort/lib/libonnxruntime.so.$V" ;;
+  esac
+  rm -rf "$DEST/nupkg" "$DEST/ort.nupkg"
 fi
 test -f "$DEST/ort/include/onnxruntime_cxx_api.h" || { echo "ONNX Runtime non scaricato"; exit 1; }
 for f in kokoro-v1.0.onnx voices-v1.0.bin; do
