@@ -48,6 +48,7 @@ namespace
         juce::String label, word;
         size_t chunk = 0;
         int localIndex = 0;      // indice nella sillabazione del blocco
+        int wordIndex = 0;
     };
 
     /** Un blocco di fonemi (<= 480 token) con tutto quello che serve per le passate del modello. */
@@ -257,6 +258,10 @@ bool Renderer::renderTimed (const RenderRequest& r, RenderedClip& clip)
 
     // ---- 4) informazioni per sillaba nella clip
     std::vector<SylInfo> info (all.size());
+    {
+        int w = -1;
+        for (size_t g = 0; g < all.size(); ++g) { if (all[g].wordStart || w < 0) ++w; info[g].wordIndex = w; }
+    }
     for (size_t c = 0; c < chunks.size(); ++c)
     {
         const auto& ch = chunks[c];
@@ -520,6 +525,7 @@ bool Renderer::renderTimed (const RenderRequest& r, RenderedClip& clip)
         clip.markers.push_back (m);
         clip.syllableLabels.add (in.label);
         clip.syllableWords.add (in.word);
+        clip.syllableWordIndex.push_back (in.wordIndex);
     }
 
     clip.f0Display.assign ((size_t) std::ceil (st.getNumSamples() / (modelRate * clip.f0Hop)) + 1, 0.0f);
@@ -540,6 +546,8 @@ bool Renderer::renderTimed (const RenderRequest& r, RenderedClip& clip)
         const float peak = juce::jmax (clip.audio.getMagnitude (0, 0, outLen), clip.audio.getMagnitude (1, 0, outLen));
         if (peak > 1.0e-4f) clip.audio.applyGain (juce::Decibels::decibelsToGain (-3.0f) / peak);
     }
+    if (! clip.markers.empty())
+        clip.triggerStart = juce::jmax (0, clip.markers.front().start - (int) (0.01 * r.targetSampleRate));
     clip.engineName = "Kokoro v3";
     clip.timed = true;
     return true;

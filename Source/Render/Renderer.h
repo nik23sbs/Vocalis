@@ -60,11 +60,13 @@ struct RenderedClip : public juce::ReferenceCountedObject
     juce::String phonemeText;
     juce::StringArray syllableLabels;   // etichette delle sillabe sintetizzate (per riconoscere le modifiche)
     juce::StringArray syllableWords;    // parola (testo dei fonemi) a cui appartiene ogni sillaba
+    std::vector<int> syllableWordIndex; // indice della parola (0, 1, ...) di ogni sillaba
     double renderMs = 0.0;
     double prerollBeats = 0.0;          // la clip parte questo numero di quarti prima della battuta di partenza
     std::vector<float> f0Display;       // F0 finale (Hz, 0 = non intonato), un valore ogni f0Hop secondi dall'inizio
     double f0Hop = 0.0125;
     bool timed = false;                 // generata dal motore v3 (voce gia' a tempo)
+    int triggerStart = 0;               // Trigger MIDI: da qui parte la voce (prima consonante, senza l'anticipo muto)
 };
 
 /** Esegue la sintesi in un thread separato; la richiesta piu' recente sostituisce quelle in coda.

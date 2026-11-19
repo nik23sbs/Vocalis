@@ -102,7 +102,7 @@ VocalisEditor::VocalisEditor (VocalisProcessor& p)
     voiceACombo = makeCombo (IDs::voiceA, "VOCE");
     voiceBCombo = makeCombo (IDs::voiceB, "MISCELA CON");
     robotVarCombo = makeCombo (IDs::robotVariant, "TIMBRO");
-    blendK = makeKnob (IDs::blend, "MISCELA", "%");
+    blendK = makeKnob (IDs::orbX, "MISCELA", "%");
     speedK = makeKnob (IDs::speed, "VELOCITA'", "x", 2);
     pitchK = makeKnob (IDs::pitch, "PITCH", " st", 1);
     intonK = makeKnob (IDs::intonation, "INTONAZIONE", "%");
@@ -113,7 +113,7 @@ VocalisEditor::VocalisEditor (VocalisProcessor& p)
     formantK->slider.setTooltip ("Timbro piu' scuro/grande (-) o chiaro/piccolo (+) senza cambiare l'intonazione");
 
     // ---- Ritmo
-    modeCombo = makeCombo (IDs::rhythmMode, "MODALITA'");
+    modeCombo = makeCombo (IDs::mode, "MODALITA'");
     divCombo = makeCombo (IDs::division, "GRIGLIA");
     bpmSrcCombo = makeCombo (IDs::bpmSource, "BPM");
     stretchCombo = makeCombo (IDs::stretch, "STRETCH");
@@ -269,7 +269,7 @@ void VocalisEditor::timerCallback()
     bpmLabel.setText (juce::String (proc.getEffectiveBpm(), 1) + " BPM" + (manual ? " (manuale)" : " (progetto)"),
                       juce::dontSendNotification);
 
-    const bool grid = (int) proc.apvts.getRawParameterValue (IDs::rhythmMode)->load() == 1;
+    const bool grid = (int) proc.apvts.getRawParameterValue (IDs::mode)->load() != 0;
     for (auto* k : { stepsK, swingK, legatoK, grooveK, accentK })
         k->slider.setEnabled (grid);
     divCombo->box.setEnabled (grid);

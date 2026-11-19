@@ -33,7 +33,9 @@ void EffectsChain::prepare (double sampleRate, int maxBlockSize)
     lowCut.prepare (spec);
     highCut.prepare (spec);
     presence.prepare (spec);
-    lastLowCut = lastHighCut = -1; lastPresence = -100;
+    warmLow.prepare (spec);
+    warmHigh.prepare (spec);
+    lastLowCut = lastHighCut = -1; lastPresence = -100; lastWarmth = -1.0f;
 
     compressor.prepare (spec);
     compressor.setAttack (5.0f);
@@ -82,6 +84,8 @@ double EffectsChain::tailSeconds (const EffectsParams& p, double bpm)
     }
     if (p.reverbOn)
         t = juce::jmax (t, 1.0 + 5.0 * p.reverbSize);
+    if (p.space > 0.005f)
+        t = juce::jmax (t, 1.5 + 3.0 * p.space);
     return t;
 }
 
@@ -177,6 +181,25 @@ void EffectsChain::process (juce::AudioBuffer<float>& buffer, const EffectsParam
 
     juce::dsp::AudioBlock<float> block (buffer.getArrayOfWritePointers(), (size_t) numCh, (size_t) n);
     juce::dsp::ProcessContextReplacing<float> ctx (block);
+
+    // --- Calore (macro): scaffale basso +6 dB, alto -3 dB, saturazione morbida
+    if (p.warmth > 0.005f)
+    {
+        if (std::abs (p.warmth - lastWarmth) > 0.005f)
+        {
+            *warmLow.state = *juce::dsp::IIR::Coefficients<float>::makeLowShelf (sr, 250.0f, 0.7f, juce::Decibels::decibelsToGain (6.0f * p.warmth));
+            *warmHigh.state = *juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, 6500.0f, 0.7f, juce::Decibels::decibelsToGain (-3.0f * p.warmth));
+            lastWarmth = p.warmth;
+        }
+        warmLow.process (ctx);
+        warmHigh.process (ctx);
+        const float drive = 1.0f + 2.0f * p.warmth, mix = 0.5f * p.warmth, comp = 1.0f / std::tanh (drive);
+        for (int c = 0; c < numCh; ++c)
+        {
+            auto* d = buffer.getWritePointer (c);
+            for (int i = 0; i < n; ++i) d[i] = d[i] * (1.0f - mix) + std::tanh (d[i] * drive) * comp * mix;
+        }
+    }
 
     // --- EQ
     if (p.eqOn)
@@ -294,14 +317,15 @@ void EffectsChain::process (juce::AudioBuffer<float>& buffer, const EffectsParam
         }
     }
 
-    // --- Riverbero
-    if (p.reverbOn)
+    // --- Riverbero (anche la macro Spazio lo usa)
+    if (p.reverbOn || p.space > 0.005f)
     {
         juce::dsp::Reverb::Parameters rp;
-        rp.roomSize = p.reverbSize;
-        rp.damping = p.reverbDamp;
-        rp.wetLevel = p.reverbMix;
-        rp.dryLevel = 1.0f - p.reverbMix * 0.5f;
+        const float wet = juce::jmax (p.reverbOn ? p.reverbMix : 0.0f, 0.4f * p.space);
+        rp.roomSize = p.reverbOn ? juce::jmax (p.reverbSize, 0.6f * p.space) : 0.55f + 0.3f * p.space;
+        rp.damping = p.reverbOn ? p.reverbDamp : 0.45f;
+        rp.wetLevel = wet;
+        rp.dryLevel = 1.0f - wet * 0.5f;
         rp.width = 1.0f;
         reverb.setParameters (rp);
         reverb.process (ctx);

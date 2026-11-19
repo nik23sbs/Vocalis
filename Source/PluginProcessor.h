@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <array>
 #include "Render/Renderer.h"
 #include "DSP/EffectsChain.h"
 #include "Engine/KokoroVoices.h"
@@ -10,7 +11,12 @@ namespace IDs
     inline constexpr const char* engine = "engine";
     inline constexpr const char* voiceA = "voiceA";
     inline constexpr const char* voiceB = "voiceB";
-    inline constexpr const char* blend = "blend";
+    inline constexpr const char* voiceC = "voiceC";
+    inline constexpr const char* voiceD = "voiceD";
+    inline constexpr const char* orbX = "orbX";            // sfera voce: 0 = A/C, 1 = B/D
+    inline constexpr const char* orbY = "orbY";            // 0 = A/B, 1 = C/D
+    inline constexpr const char* variant = "variant";      // seme delle varianti
+    inline constexpr const char* mode = "mode";            // Parlato / Rap / Canto
     inline constexpr const char* robotVariant = "robotVariant";
     inline constexpr const char* language = "language";
     inline constexpr const char* pitch = "pitch";
@@ -20,7 +26,6 @@ namespace IDs
     inline constexpr const char* robotize = "robotize";
     inline constexpr const char* robotHz = "robotHz";
     // Ritmo
-    inline constexpr const char* rhythmMode = "rhythmMode";
     inline constexpr const char* division = "division";
     inline constexpr const char* stepsPerSyl = "stepsPerSyl";
     inline constexpr const char* swing = "swing";
@@ -32,6 +37,14 @@ namespace IDs
     inline constexpr const char* accentAmt = "accentAmt";
     inline constexpr const char* bpmSource = "bpmSource";
     inline constexpr const char* bpmManual = "bpmManual";
+    // Canto e armonie
+    inline constexpr const char* vibrato = "vibrato", *glide = "glide";
+    inline constexpr const char* key = "key", *scale = "scale";
+    inline constexpr const char* harm1 = "harm1", *harm2 = "harm2", *harmLevel = "harmLevel", *harmWidth = "harmWidth";
+    inline constexpr const char* doubleOn = "doubleOn", *doubleLevel = "doubleLevel";
+    // Macro
+    inline constexpr const char* mExpr = "mExpr", *mFlow = "mFlow", *mWarmth = "mWarmth";
+    inline constexpr const char* mBreath = "mBreath", *mChoir = "mChoir", *mSpace = "mSpace";
     // Riproduzione
     inline constexpr const char* playMode = "playMode";
     inline constexpr const char* startBar = "startBar";
@@ -98,6 +111,25 @@ public:
     void resetEdits();
     bool hasEdits() const;
 
+    // Melodia (Canto): da file MIDI, dalla cattura dalla DAW o dalle note delle sillabe
+    bool loadMidiFile (const juce::File& f, juce::String& error);
+    void setMelody (std::vector<vocalis::NoteEvent> m);
+    std::vector<vocalis::NoteEvent> getMelody() const { return melody; }
+    void startMidiCapture();
+    void stopMidiCapture();
+    bool isCapturingMidi() const { return capturing.load(); }
+
+    // Pronuncia: parola del testo a cui appartiene una sillaba; scrive "parola = /ipa/" nel dizionario (vuoto = rimuove)
+    juce::String getTextWordForSyllable (int syllableIndex) const;
+    juce::String getPronunciation (const juce::String& word) const;
+    void setPronunciation (const juce::String& word, const juce::String& ipa);
+
+    /** Solo test: esegue il modello con un runner esterno. */
+    void setModelRunnerForTests (vocalis::Renderer::ModelRunner r) { renderer.setModelRunner (std::move (r)); forceRender(); }
+
+    static juce::StringArray harmonyNames();
+    static int harmonyDegrees (int choiceIndex);
+
     bool loadGrooveFile (const juce::File& f, juce::String& error);
     void clearGroove();
     const vocalis::GrooveTemplate& getGroove() const { return groove; }
@@ -136,6 +168,15 @@ private:
     vocalis::EffectsChain effects;
 
     juce::String text { "Ciao, sono Vocalis. Scrivi il tuo testo qui e lo trasformo in voce a tempo." };
+    std::vector<vocalis::NoteEvent> melody;
+    int melodyVersion = 0;
+
+    // cattura MIDI (audio thread -> message thread senza allocazioni)
+    struct CapturedEvent { double ppq; int pitch; bool on; };
+    std::array<CapturedEvent, 1024> captured {};
+    std::atomic<int> capturedCount { 0 };
+    std::atomic<bool> capturing { false };
+    std::atomic<double> captureStartPpq { -1.0 };
     juce::String dictionary;
     std::vector<vocalis::SyllableEdit> edits;
     vocalis::GrooveTemplate groove;

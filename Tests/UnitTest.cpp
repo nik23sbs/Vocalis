@@ -4,6 +4,7 @@
 #include "DSP/TimingPlanner.h"
 #include "DSP/PitchPlanner.h"
 #include "DSP/TimeStretch.h"
+#include "DSP/EffectsChain.h"
 #include <iostream>
 
 using namespace vocalis;
@@ -290,8 +291,27 @@ static void testWarp()
     CHECK (std::abs (std::sqrt (rmsOut / rmsIn) - 1.0f) < 0.1f, "livello conservato");
 }
 
+static void testMacros()
+{
+    const double sr = 48000.0;
+    auto make = [&] { juce::AudioBuffer<float> b (2, 48000); b.clear();
+                      juce::Random r (1); for (int i = 0; i < 12000; ++i) for (int c = 0; c < 2; ++c) b.setSample (c, i, (r.nextFloat() * 2 - 1) * 0.2f); return b; };
+    auto lowEnergy = [] (const juce::AudioBuffer<float>& b) {    // energia sotto ~300 Hz (media mobile)
+        double e = 0, m = 0; for (int i = 0; i < 12000; ++i) { m += 0.04 * (b.getSample (0, i) - m); e += m * m; } return e; };
+    auto tail = [] (const juce::AudioBuffer<float>& b) { return b.getMagnitude (0, 20000, 20000); };
+
+    EffectsParams dry; dry.eqOn = dry.compOn = dry.deessOn = dry.limiterOn = false;
+    auto a = make(); { EffectsChain c; c.prepare (sr, 512); c.process (a, dry, 120); }
+    auto w = make(); auto pw = dry; pw.warmth = 1.0f; { EffectsChain c; c.prepare (sr, 512); c.process (w, pw, 120); }
+    CHECK (lowEnergy (w) > 1.5 * lowEnergy (a), "Calore: piu' basse");
+    auto sp = make(); auto ps = dry; ps.space = 1.0f; { EffectsChain c; c.prepare (sr, 512); c.process (sp, ps, 120); }
+    CHECK (tail (a) < 1.0e-6f && tail (sp) > 1.0e-3f, "Spazio: coda di riverbero anche con il riverbero spento");
+    CHECK (EffectsChain::tailSeconds (ps, 120) > 1.0, "Spazio: coda in export");
+}
+
 int main()
 {
+    testMacros();
     testWarp();
     testPitch();
     testTimingGrid();

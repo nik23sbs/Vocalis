@@ -146,7 +146,15 @@ RenderedClip::Ptr Renderer::renderLegacy (const RenderRequest& r, RenderedClip::
         return clip;
     }
     clip->phonemeText = synth->phonemeText;
-    for (auto& s : synth->syllables) clip->syllableLabels.add (s.label);
+    {
+        int w = -1;
+        for (auto& s : synth->syllables)
+        {
+            clip->syllableLabels.add (s.label);
+            if (s.wordStart || w < 0) ++w;
+            clip->syllableWordIndex.push_back (w);
+        }
+    }
 
     // ---- 2) trasformazioni WORLD (cache)
     WorldTransform wt;

@@ -18,6 +18,8 @@ struct EffectsParams
     bool deessOn = true;    float deessAmount = 0.4f;            // 0..1
     bool doublerOn = false; float doublerMix = 0.35f, doublerWidth = 0.8f;
     float outGainDb = 0.0f;
+    float warmth = 0.0f;      // macro Calore 0..1: basse piu' piene, alte addolcite, leggera saturazione
+    float space = 0.0f;       // macro Spazio 0..1: riverbero aggiunto (anche a riverbero spento)
     bool limiterOn = true;  float limiterCeilingDb = -0.3f;
 
     static juce::StringArray delayDivisionNames();
@@ -44,7 +46,8 @@ private:
     float crushHold[2] = {}; int crushCounter = 0;
 
     using Filter = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>, juce::dsp::IIR::Coefficients<float>>;
-    Filter lowCut, highCut, presence;
+    Filter lowCut, highCut, presence, warmLow, warmHigh;
+    float lastWarmth = -1.0f;
     float lastLowCut = -1, lastHighCut = -1, lastPresence = -100;
 
     juce::dsp::Compressor<float> compressor;
