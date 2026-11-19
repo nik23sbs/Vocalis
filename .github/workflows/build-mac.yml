@@ -217,8 +217,8 @@ jobs:
           choco install innosetup -y --no-progress > /dev/null || true
           ISCC="/c/Program Files (x86)/Inno Setup 6/ISCC.exe"
           VERSION=$(grep -Eo 'project\(Vocalis VERSION [0-9.]+' CMakeLists.txt | awk '{print $3}')
-          "$ISCC" "/DVersion=$VERSION" "/DArt=$(cygpath -w "$PWD/build/Vocalis_artefacts/Release")" \
-                  "/DModels=$(cygpath -w "$PWD/neural/models")" installer/windows/Vocalis.iss
+          ART="$(cygpath -w "$PWD/build/Vocalis_artefacts/Release")"; MOD="$(cygpath -w "$PWD/neural/models")"
+          MSYS_NO_PATHCONV=1 "$ISCC" "-DVersion=$VERSION" "-DArt=$ART" "-DModels=$MOD" "$(cygpath -w "$PWD/installer/windows/Vocalis.iss")"
           ls -la dist
 
       - name: Prova installazione
