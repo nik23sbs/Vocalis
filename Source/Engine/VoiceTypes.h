@@ -44,6 +44,8 @@ struct VoiceMix
     }
 };
 
+enum class VocalMode { Parlato = 0, Rap, Canto };
+
 enum class EngineType { Neural = 0, Formant };
 enum class VoiceType { Male = 0, Female, Robot };
 
@@ -56,11 +58,15 @@ struct SyllableEdit
     float gainDb = 0.0f;
     bool muted = false;
     juce::String label;        // per riconoscere la sillaba quando il testo cambia
+    int note = -1;             // nota MIDI della sillaba (Canto), -1 = automatica
+    float onsetScale = 1.0f;   // durata delle consonanti iniziali
+    bool vibrato = false, glide = false, whisper = false, adlib = false;
 
     bool isDefault() const
     {
         return std::abs (shiftBeats) < 1e-9 && std::abs (lengthScale - 1.0) < 1e-9
-            && std::abs (pitchSemis) < 1e-6f && std::abs (gainDb) < 1e-6f && ! muted;
+            && std::abs (pitchSemis) < 1e-6f && std::abs (gainDb) < 1e-6f && ! muted
+            && note < 0 && std::abs (onsetScale - 1.0f) < 1e-6f && ! vibrato && ! glide && ! whisper && ! adlib;
     }
 };
 

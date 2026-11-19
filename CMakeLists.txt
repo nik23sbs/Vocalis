@@ -72,6 +72,8 @@ set(VOCALIS_CORE_SOURCES
     Source/Engine/TokenSyllables.cpp
     Source/DSP/TimeStretch.cpp
     Source/DSP/Quantizer.cpp
+    Source/DSP/TimingPlanner.cpp
+    Source/DSP/PitchPlanner.cpp
     Source/DSP/GrooveExtractor.cpp
     Source/DSP/EffectsChain.cpp
     Source/DSP/WorldVoice.cpp
