@@ -49,7 +49,8 @@ public:
         prendono il resto; l'errore di arrotondamento al frame viene diffuso sulle sillabe seguenti. */
     static TimedDurations durations (const juce::String& phonemes, const std::vector<int64_t>& predicted,
                                      const std::vector<TokenSyllable>& sylls, const std::vector<SyllableTarget>& targets,
-                                     const std::vector<SyllableEdit>& edits, double bpm, double startBeat);
+                                     const std::vector<SyllableEdit>& edits, double bpm, double startBeat,
+                                     VocalMode mode = VocalMode::Rap);
 
     /** Anticipo minimo (in quarti, multiplo di 1) perche' le consonanti iniziali stiano prima della prima vocale. */
     static double prerollBeats (const std::vector<int64_t>& predicted, const std::vector<TokenSyllable>& sylls,

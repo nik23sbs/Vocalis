@@ -78,7 +78,8 @@ set(VOCALIS_CORE_SOURCES
     Source/DSP/EffectsChain.cpp
     Source/DSP/WorldVoice.cpp
     Source/DSP/Loudness.cpp
-    Source/Render/Renderer.cpp)
+    Source/Render/Renderer.cpp
+    Source/Render/TimedRender.cpp)
 
 function(vocalis_link_core target)
     target_include_directories(${target} PRIVATE Source)

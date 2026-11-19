@@ -25,6 +25,11 @@ public:
                                      const std::vector<TokenSyllable>& sylls, const std::vector<int>& notes,
                                      const std::vector<SyllableEdit>& edits, const PitchSettings& s);
 
+    /** Canto: energia (N del modello, 2 valori per frame) tenuta sulle vocali, che altrimenti si spengono
+        quando sono molto piu' lunghe del parlato. Fuori dal Canto restituisce la curva naturale. */
+    static std::vector<float> sustainEnergy (const std::vector<float>& naturalN, const std::vector<int64_t>& durations,
+                                             const std::vector<TokenSyllable>& sylls, VocalMode mode);
+
     /** true se build() restituirebbe la curva naturale invariata (si evita una passata del modello). */
     static bool isIdentity (const std::vector<int>& notes, const std::vector<SyllableEdit>& edits, const PitchSettings& s);
 

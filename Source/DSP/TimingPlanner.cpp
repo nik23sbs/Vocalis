@@ -90,7 +90,8 @@ double TimingPlanner::prerollBeats (const std::vector<int64_t>& predicted, const
 
 TimedDurations TimingPlanner::durations (const juce::String& ps, const std::vector<int64_t>& pred,
                                          const std::vector<TokenSyllable>& sylls, const std::vector<SyllableTarget>& targets,
-                                         const std::vector<SyllableEdit>& edits, double bpm, double startBeat)
+                                         const std::vector<SyllableEdit>& edits, double bpm, double startBeat,
+                                         VocalMode mode)
 {
     TimedDurations r;
     const int n = ps.length();
@@ -106,12 +107,15 @@ TimedDurations TimingPlanner::durations (const juce::String& ps, const std::vect
     auto P = [&] (int token) { return pred[(size_t) token + 1]; };
     auto& D = d;   // D[token + 1]
 
+    const bool sing = mode == VocalMode::Canto;
     auto consonantFrames = [&] (int token, float scale) -> int
     {
         const auto c = ps[token];
         if (isPunct (c)) return 0;
-        if (isStress (c)) return juce::jmax (0, naturalFrames (P (token), 1.0f));
-        return juce::jmax (1, naturalFrames (P (token), scale));
+        // nel canto accenti e spazi non durano e le consonanti sono brevi: la nota la tiene la vocale
+        if (isStress (c) || (sing && c == ' ')) return sing ? 0 : juce::jmax (0, naturalFrames (P (token), 1.0f));
+        const int f = juce::jmax (1, naturalFrames (P (token), scale));
+        return sing ? juce::jmin (2, f) : f;
     };
 
     // ---- inizio: silenzio del modello (2 frame) + attacco naturale della prima sillaba
@@ -163,7 +167,8 @@ TimedDurations TimingPlanner::durations (const juce::String& ps, const std::vect
         }
 
         int sumCons = std::accumulate (cons.begin(), cons.end(), 0);
-        while (sumCons + vmin > want)
+        const int consBudget = sing ? juce::jmax (1, (int) std::floor (0.35 * want)) : want - vmin;
+        while (sumCons > consBudget || sumCons + vmin > want)
         {
             auto it = std::max_element (cons.begin(), cons.end());
             if (it == cons.end() || *it <= 1) break;

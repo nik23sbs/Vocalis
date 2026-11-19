@@ -3,6 +3,7 @@
 #include "Engine/KokoroVoices.h"
 #include "DSP/TimingPlanner.h"
 #include "DSP/PitchPlanner.h"
+#include "DSP/TimeStretch.h"
 #include <iostream>
 
 using namespace vocalis;
@@ -160,6 +161,24 @@ static void testTimingEdgeCases()
     CHECK (std::abs (c[0].endBeat - 1.0) < 1e-9, "fine sillaba = fine nota");
     CHECK (c[2].anchorBeat >= 1.5 - 1e-9 && c[2].noteMidi == 64, "dopo le note: griglia, ultima nota tenuta");
 
+    // Canto: le consonanti si accorciano (accenti e spazi a zero), la vocale prende quasi tutta la nota
+    {
+        const juce::String cps (juce::CharPointer_UTF8 ("lˈuna splˈɛnde"));
+        auto csy = TokenSyllables::build (cps);       // lu-na-splɛn-de
+        std::vector<NoteEvent> cn { { 0, 0.5, 60 }, { 0.5, 0.5, 62 }, { 1.0, 0.5, 64 }, { 1.5, 1.0, 62 } };
+        RhythmSettings crs; crs.bpm = 90;
+        auto ct = TimingPlanner::plan (csy, crs, {}, {}, VocalMode::Canto, cn);
+        auto cpred = fakePredicted (cps);
+        for (int i = 0; i < cps.length(); ++i) if (cps[i] == 0x02C8) cpred[(size_t) i + 1] = 2;   // accenti "lunghi" come nel modello
+        auto cd = TimingPlanner::durations (cps, cpred, csy, ct, {}, crs.bpm, -TimingPlanner::prerollBeats (cpred, csy, ct, crs.bpm), VocalMode::Canto);
+        const int aOfNa = csy[1].nucleusFirst;
+        const double spanNa = 0.5 * 40.0 * 60.0 / 90.0;          // 13,3 frame
+        CHECK (cd.durations[(size_t) aOfNa + 1] >= 0.6 * spanNa, "Canto: la vocale di 'na' tiene la nota, frame " << cd.durations[(size_t) aOfNa + 1]);
+        bool zeroMarks = true;
+        for (int i = 0; i < cps.length(); ++i) if ((cps[i] == ' ' || cps[i] == 0x02C8) && cd.durations[(size_t) i + 1] != 0) zeroMarks = false;
+        CHECK (zeroMarks, "Canto: accenti e spazi senza durata");
+    }
+
     // Parlato: nessun target (tempi naturali)
     CHECK (TimingPlanner::plan (sy, rs, {}, {}, VocalMode::Parlato, {}).empty(), "Parlato senza griglia");
 }
@@ -208,6 +227,26 @@ static void testPitch()
     float maxJump = 0; for (size_t i = 1; i < o.size(); ++i) if (o[i] > 0 && o[i - 1] > 0) maxJump = std::max (maxJump, std::abs (PitchPlanner::hzToMidi (o[i]) - PitchPlanner::hzToMidi (o[i - 1])));
     CHECK (maxJump < 1.0f, "glide: nessun salto brusco tra note, max " << maxJump << " st");
 
+    // Canto: la vocale resta intonata anche dove il modello farebbe cadere la F0 (fine frase)
+    {
+        auto drop = nat;
+        for (size_t i = f0At (8, 0.3); i < f0At (8, 0.9); ++i) drop[i] = 5.0f;
+        auto od = PitchPlanner::build (drop, dur, sy, notes, {}, sing);
+        CHECK (std::abs (od[f0At (8, 0.6)] - PitchPlanner::midiToHz (64)) < 4.0f, "Canto: vocale sempre intonata, era " << od[f0At (8, 0.6)]);
+    }
+
+    // energia: nel Canto le vocali non si spengono
+    {
+        std::vector<float> nN (nat.size(), 8.0f);
+        const size_t v0 = f0At (8, 0.0), v1 = f0At (8, 1.0);
+        for (size_t i = v0; i < v1; ++i) nN[i] = 8.0f - 18.0f * (float) (i - v0) / (float) (v1 - v0);   // decade fino a -10
+        CHECK (PitchPlanner::sustainEnergy (nN, dur, sy, VocalMode::Rap) == nN, "energia invariata fuori dal Canto");
+        auto en = PitchPlanner::sustainEnergy (nN, dur, sy, VocalMode::Canto);
+        CHECK (en[f0At (8, 0.7)] > 7.0f, "Canto: vocale finale sostenuta, era " << en[f0At (8, 0.7)]);
+        CHECK (en[v1 - 1] < en[f0At (8, 0.7)], "Canto: rilascio alla fine della vocale");
+        CHECK (en[f0At (7, 0.5)] == nN[f0At (7, 0.5)], "consonanti invariate");
+    }
+
     auto vib = sing; vib.vibratoCents = 50.0f;
     o = PitchPlanner::build (nat, dur, sy, notes, {}, vib);
     float dev = 0, early = 0;
@@ -220,6 +259,12 @@ static void testPitch()
     CHECK (dev > 35.0f && dev < 65.0f, "vibrato ~50 cent, era " << dev);
     CHECK (early < 20.0f, "vibrato non subito all'attacco, era " << early);
 
+    // valori minuscoli del modello nelle consonanti sorde: non sono note e passano invariati
+    std::vector<float> low (nat); for (size_t i = 0; i < 6; ++i) low[i] = 3.0f;
+    CHECK (PitchPlanner::medianMidi (low, 0, 6) == 0.0f, "F0 < 40 Hz = non intonato");
+    o = PitchPlanner::build (low, dur, sy, {}, {}, up);
+    CHECK (o[2] == 3.0f, "F0 sorda invariata anche con trasposizione");
+
     CHECK (PitchPlanner::diatonicShift (60, 2, 0, false) == 4, "Do maggiore: terza sopra Do = +4");
     CHECK (PitchPlanner::diatonicShift (64, 2, 0, false) == 3, "terza sopra Mi = +3");
     CHECK (PitchPlanner::diatonicShift (69, 2, 9, true) == 3, "La minore: terza sopra La = +3");
@@ -228,8 +273,26 @@ static void testPitch()
     CHECK (PitchPlanner::diatonicShift (61, 2, 0, false) == 3 || PitchPlanner::diatonicShift (61, 2, 0, false) == 4, "nota fuori scala: terza ragionevole");
 }
 
+static void testWarp()
+{
+    const double sr = 24000.0;
+    std::vector<float> x (24000);
+    for (size_t i = 0; i < x.size(); ++i) x[i] = 0.3f * std::sin (2.0f * 3.14159265f * 150.0f * (float) i / (float) sr);
+    x[12000] = 1.0f;                                                       // click a 0,5 s
+    auto same = TimeStretch::warp (x.data(), (int) x.size(), { 0, 24000 }, { 0, 24000 }, sr);
+    CHECK (same == x, "mappa identita' = ingresso");
+
+    auto w = TimeStretch::warp (x.data(), (int) x.size(), { 0, 12000, 24000 }, { 0, 12240, 24000 }, sr);
+    CHECK (w.size() == 24000, "lunghezza uscita = ultimo punto");
+    int peak = 0; for (int i = 1; i < (int) w.size(); ++i) if (std::abs (w[(size_t) i]) > std::abs (w[(size_t) peak])) peak = i;
+    CHECK (std::abs (peak - 12240) <= 120, "click spostato di +10 ms (entro 5 ms), trovato a " << peak);
+    float rmsIn = 0, rmsOut = 0; for (int i = 2000; i < 10000; ++i) { rmsIn += x[(size_t) i] * x[(size_t) i]; rmsOut += w[(size_t) i] * w[(size_t) i]; }
+    CHECK (std::abs (std::sqrt (rmsOut / rmsIn) - 1.0f) < 0.1f, "livello conservato");
+}
+
 int main()
 {
+    testWarp();
     testPitch();
     testTimingGrid();
     testTimingEdgeCases();

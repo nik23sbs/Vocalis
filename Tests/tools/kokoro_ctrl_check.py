@@ -15,11 +15,13 @@ z1, z2 = np.zeros(1, np.int64), np.zeros((1, 1), np.float32)
 outs = [o.name for o in s.get_outputs()]
 fails = []
 
-def run(dur=None, f0=None, row=0):
+def run(dur=None, f0=None, row=0, n=None):
     st = voices["if_sara"][len(toks) - 1 + row]
     feed = {"input_ids": ids, "style": st, "speed": np.array([1.0], np.float32),
             "dur_override": z1 if dur is None else dur, "use_dur": np.array(dur is not None),
             "f0_override": z2 if f0 is None else f0, "use_f0": np.array(f0 is not None)}
+    if "n_override" in [i.name for i in s.get_inputs()]:
+        feed.update({"n_override": z2 if n is None else n, "use_n": np.array(n is not None)})
     return dict(zip(outs, s.run(None, feed)))
 
 def pitch(w):
@@ -59,6 +61,20 @@ if "f0" in outs:
     _, v0 = pitch(t["waveform"].ravel())
     _, v1 = pitch(run(dur=timed, f0=np.zeros_like(nat))["waveform"].ravel())
     check("sussurrato (f0=0) meno intonato", v1 < v0 - 0.15, f"voicing {v0:.2f} -> {v1:.2f}")
+
+# vocale finale tenuta 1,5 s: con l'energia (N) sostenuta non deve spegnersi
+check("uscita n presente", "n" in outs, str(outs))
+if "n" in outs:
+    long = dur.copy(); vi = [i for i, c in enumerate(ps) if c in "aeiouɛɔ"][-1]
+    long[vi + 1] = 60
+    a = run(dur=long)
+    nn = a["n"].reshape(1, -1).astype(np.float32).copy()
+    st = 2 * int(long[:vi + 1].sum()); en = st + 2 * 60
+    nn[0, st + 8:en] = np.max(nn[0, st:st + 8])
+    b = run(dur=long, f0=a["f0"].reshape(1, -1).astype(np.float32), n=nn)
+    w = b["waveform"].ravel(); s0 = st * 300
+    q1 = np.sqrt((w[s0 + 2400:s0 + 7200] ** 2).mean()); q2 = np.sqrt((w[s0 + 26000:s0 + 33000] ** 2).mean())
+    check("vocale lunga sostenuta", q2 > 0.4 * q1, f"rms inizio {q1:.3f} fine {q2:.3f}")
 
 var = run(row=12)
 d2 = var["duration"].astype(np.int64)

@@ -14,7 +14,8 @@ struct KokoroPass
 {
     std::vector<int64_t> durations;
     std::vector<float> f0;
-    bool useDur = false, useF0 = false;
+    std::vector<float> n;              // energia (stessa lunghezza della F0), solo con il modello a 9 ingressi
+    bool useDur = false, useF0 = false, useN = false;
 };
 
 struct KokoroChunkResult
@@ -22,6 +23,7 @@ struct KokoroChunkResult
     std::vector<float> audio;          // 24 kHz, senza tagli
     std::vector<int64_t> durations;    // durate usate (token + 2)
     std::vector<float> f0;             // F0 usata (vuota se il modello non e' controllabile)
+    std::vector<float> n;              // energia usata (vuota se il modello non la espone)
 };
 
 class KokoroEngine : public VoiceEngine

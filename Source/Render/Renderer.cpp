@@ -93,6 +93,28 @@ RenderedClip::Ptr Renderer::renderNow (const RenderRequest& r)
     clip->sampleRate = r.targetSampleRate;
     clip->stepBeats = r.rhythm.stepBeats;
 
+    bool useTimed = false;
+    {
+        std::lock_guard<std::mutex> l (cacheMutex);
+        useTimed = r.voice.engine == EngineType::Neural && (runner != nullptr || KokoroEngine::isControllable());
+    }
+    if (useTimed)
+    {
+        if (renderTimed (r, *clip))
+        {
+            clip->renderMs = juce::Time::getMillisecondCounterHiRes() - t0;
+            return clip;
+        }
+        // errore del motore v3: si riprova con la catena v2 (eSpeak di riserva compresa)
+        clip = new RenderedClip();
+        clip->bpm = r.rhythm.bpm; clip->sampleRate = r.targetSampleRate; clip->stepBeats = r.rhythm.stepBeats;
+    }
+    return renderLegacy (r, clip, t0);
+}
+
+RenderedClip::Ptr Renderer::renderLegacy (const RenderRequest& r, RenderedClip::Ptr clip, double t0)
+{
+
     // ---- 1) sintesi (cache)
     std::shared_ptr<SynthResult> synth;
     juce::String warning;
@@ -168,7 +190,9 @@ RenderedClip::Ptr Renderer::renderNow (const RenderRequest& r)
     robotize (voice.audio, voice.sampleRate, r.voice.robotHz, r.voice.robotize);
 
     // ---- 4) ritmo
-    auto q = Quantizer::process (voice, r.rhythm, r.groove, r.edits);
+    auto rs = r.rhythm;
+    if (r.mode == VocalMode::Parlato) rs.mode = RhythmSettings::Mode::Free;
+    auto q = Quantizer::process (voice, rs, r.groove, r.edits);
     clip->lengthBeats = q.lengthBeats;
 
     // ---- 5) ricampionamento al sample rate della DAW

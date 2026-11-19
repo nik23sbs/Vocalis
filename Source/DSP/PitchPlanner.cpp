@@ -9,7 +9,7 @@ namespace
 {
     constexpr float secPerSample = 0.0125f;   // 2 valori per frame da 25 ms
 
-    struct Range { int start, vowel, end; };   // in campioni F0
+    struct Range { int start, vowel, vowelEnd, end; };   // in campioni F0
 
     std::vector<Range> syllableRanges (const std::vector<int64_t>& d, const std::vector<TokenSyllable>& sylls, int total)
     {
@@ -23,13 +23,49 @@ namespace
             x.start = k == 0 ? 0 : tokenStart (sylls[k].firstToken);
             x.vowel = tokenStart (sylls[k].nucleusFirst);
             x.end = k + 1 == sylls.size() ? total : tokenStart (sylls[k + 1].firstToken);
+            x.vowelEnd = tokenStart (sylls[k].nucleusLast + 1);
             x.start = juce::jlimit (0, total, x.start); x.vowel = juce::jlimit (x.start, total, x.vowel); x.end = juce::jlimit (x.vowel, total, x.end);
+            x.vowelEnd = juce::jlimit (x.vowel, x.end, x.vowelEnd);
             r.push_back (x);
         }
         return r;
     }
 
-    bool voiced (float f) { return f > 1.0f; }
+    bool voiced (float f) { return f > 40.0f; }   // sotto: consonanti sorde (il modello da' valori minuscoli)
+}
+
+std::vector<float> PitchPlanner::sustainEnergy (const std::vector<float>& nat, const std::vector<int64_t>& durations,
+                                                const std::vector<TokenSyllable>& sylls, VocalMode mode)
+{
+    if (mode != VocalMode::Canto || nat.empty() || sylls.empty())
+        return nat;
+    const int n = (int) nat.size();
+    auto ranges = syllableRanges (durations, sylls, n);
+
+    // livello di riferimento: 80o percentile dell'energia sulle vocali
+    std::vector<float> vals;
+    for (auto& r : ranges) for (int i = r.vowel; i < r.vowelEnd; ++i) vals.push_back (nat[(size_t) i]);
+    if (vals.empty()) return nat;
+    std::sort (vals.begin(), vals.end());
+    const float floorLevel = vals[(size_t) (0.8 * (double) (vals.size() - 1))] - 0.5f;
+
+    auto out = nat;
+    for (auto& r : ranges)
+    {
+        const int len = r.vowelEnd - r.vowel;
+        if (len <= 0) continue;
+        const int attack = juce::jmin (2, len / 3), release = juce::jmin (4, juce::jmax (1, len / 4));
+        for (int j = 0; j < len; ++j)
+        {
+            const int i = r.vowel + j;
+            float w = 1.0f;
+            if (j < attack) w = (float) (j + 1) / (float) (attack + 1);
+            if (j >= len - release) w = juce::jmin (w, (float) (len - j) / (float) (release + 1));
+            const float target = juce::jmax (nat[(size_t) i], floorLevel);
+            out[(size_t) i] = nat[(size_t) i] + (target - nat[(size_t) i]) * w;
+        }
+    }
+    return out;
 }
 
 bool PitchPlanner::isIdentity (const std::vector<int>& notes, const std::vector<SyllableEdit>& edits, const PitchSettings& s)
@@ -157,9 +193,15 @@ std::vector<float> PitchPlanner::build (const std::vector<float>& nat, const std
             }
     }
 
+    // nel canto le vocali sono sempre intonate (a fine frase il modello farebbe cadere la F0)
+    std::vector<bool> forced ((size_t) n, false);
+    if (sing)
+        for (auto& rg : ranges)
+            for (int i = rg.vowel; i < rg.vowelEnd; ++i) forced[(size_t) i] = true;
+
     std::vector<float> out ((size_t) n);
     for (int i = 0; i < n; ++i)
-        out[(size_t) i] = voiced (nat[(size_t) i]) ? midiToHz (midi[(size_t) i] + offset[(size_t) i]) : 0.0f;
+        out[(size_t) i] = voiced (nat[(size_t) i]) || forced[(size_t) i] ? midiToHz (midi[(size_t) i] + offset[(size_t) i]) : nat[(size_t) i];
 
     for (size_t k = 0; k < sylls.size(); ++k)
         if (edit (k).whisper)

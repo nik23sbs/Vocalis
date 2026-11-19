@@ -97,6 +97,7 @@ namespace
         std::unique_ptr<Ort::Session> session;
         juce::File loadedFrom;
         bool controllable = false;
+        int numInputs = 3;   // 9 con il controllo dell'energia (n_override/use_n)
         KokoroVoices voices;
         juce::String error;
 
@@ -136,6 +137,7 @@ namespace
                 return false;
             }
             controllable = session->GetInputCount() >= 7 && session->GetOutputCount() >= 3;
+            numInputs = (int) session->GetInputCount();
             loadedFrom = dir;
             error.clear();
             return true;
@@ -254,6 +256,12 @@ KokoroChunkResult KokoroEngine::run (const juce::String& chunk, const VoiceMix& 
         error = "Curva F0 di lunghezza errata";
         return r;
     }
+    const bool useN = pass.useN && m.numInputs >= 9;
+    if (useN && (! pass.useDur || (int64_t) pass.n.size() != 2 * totalDur))
+    {
+        error = "Curva di energia di lunghezza errata";
+        return r;
+    }
 
     try
     {
@@ -267,6 +275,10 @@ KokoroChunkResult KokoroEngine::run (const juce::String& chunk, const VoiceMix& 
         const int64_t oneShape[1] = { 1 };
         const int64_t durShape[1] = { useDur ? (int64_t) pass.durations.size() : 1 };
         const int64_t f0Shape[2] = { 1, useF0 ? (int64_t) pass.f0.size() : 1 };
+        const int64_t f0Shape1[2] = { 1, 1 };
+        bool useNFlag = useN;
+        std::vector<float> nCopy = pass.n;
+        const int64_t nShape[2] = { 1, useN ? (int64_t) pass.n.size() : 1 };
 
         std::vector<Ort::Value> in;
         in.push_back (Ort::Value::CreateTensor<int64_t> (mem, ids.data(), ids.size(), idShape, 2));
@@ -283,11 +295,18 @@ KokoroChunkResult KokoroEngine::run (const juce::String& chunk, const VoiceMix& 
             in.push_back (useF0 ? Ort::Value::CreateTensor<float> (mem, f0Copy.data(), f0Copy.size(), f0Shape, 2)
                                 : Ort::Value::CreateTensor<float> (mem, &noF0, 1, f0Shape, 2));
             in.push_back (Ort::Value::CreateTensor<bool> (mem, &useF0, 1, oneShape, 0));
+            if (m.numInputs >= 9)
+            {
+                in.push_back (useNFlag ? Ort::Value::CreateTensor<float> (mem, nCopy.data(), nCopy.size(), nShape, 2)
+                                       : Ort::Value::CreateTensor<float> (mem, &noF0, 1, f0Shape1, 2));
+                in.push_back (Ort::Value::CreateTensor<bool> (mem, &useNFlag, 1, oneShape, 0));
+            }
         }
 
-        const char* inNames[] = { "input_ids", "style", "speed", "dur_override", "use_dur", "f0_override", "use_f0" };
-        const char* outNames[] = { "waveform", "duration", "f0" };
-        auto out = m.session->Run (Ort::RunOptions { nullptr }, inNames, in.data(), in.size(), outNames, m.controllable ? 3 : 2);
+        const char* inNames[] = { "input_ids", "style", "speed", "dur_override", "use_dur", "f0_override", "use_f0", "n_override", "use_n" };
+        const char* outNames[] = { "waveform", "duration", "f0", "n" };
+        const size_t numOut = ! m.controllable ? 2 : (m.numInputs >= 9 ? 4 : 3);
+        auto out = m.session->Run (Ort::RunOptions { nullptr }, inNames, in.data(), in.size(), outNames, numOut);
 
         const float* wav = out[0].GetTensorData<float>();
         r.audio.assign (wav, wav + out[0].GetTensorTypeAndShapeInfo().GetElementCount());
@@ -298,6 +317,11 @@ KokoroChunkResult KokoroEngine::run (const juce::String& chunk, const VoiceMix& 
         {
             const float* f = out[2].GetTensorData<float>();
             r.f0.assign (f, f + out[2].GetTensorTypeAndShapeInfo().GetElementCount());
+        }
+        if (numOut >= 4)
+        {
+            const float* e = out[3].GetTensorData<float>();
+            r.n.assign (e, e + out[3].GetTensorTypeAndShapeInfo().GetElementCount());
         }
     }
     catch (const std::exception& e)
@@ -353,7 +377,7 @@ SynthResult KokoroEngine::synthesize (const juce::String& text, const VoiceSetti
     {
         auto mem = Ort::MemoryInfo::CreateCpu (OrtArenaAllocator, OrtMemTypeDefault);
         const char* inNames[] = { "input_ids", "style", "speed" };
-        const char* ctrlInNames[] = { "input_ids", "style", "speed", "dur_override", "use_dur", "f0_override", "use_f0" };
+        const char* ctrlInNames[] = { "input_ids", "style", "speed", "dur_override", "use_dur", "f0_override", "use_f0", "n_override", "use_n" };
         const char* outNames[] = { "waveform", "duration" };
 
         for (auto chunk : Phonemizer::splitForModel (phonemes))
@@ -392,6 +416,11 @@ SynthResult KokoroEngine::synthesize (const juce::String& text, const VoiceSetti
                 inputs.push_back (Ort::Value::CreateTensor<bool> (mem, &off, 1, oneShape, 0));
                 inputs.push_back (Ort::Value::CreateTensor<float> (mem, &noF0, 1, f0Shape, 2));
                 inputs.push_back (Ort::Value::CreateTensor<bool> (mem, &off, 1, oneShape, 0));
+                if (m.numInputs >= 9)
+                {
+                    inputs.push_back (Ort::Value::CreateTensor<float> (mem, &noF0, 1, f0Shape, 2));
+                    inputs.push_back (Ort::Value::CreateTensor<bool> (mem, &off, 1, oneShape, 0));
+                }
             }
 
             auto outputs = m.session->Run (Ort::RunOptions { nullptr }, m.controllable ? ctrlInNames : inNames, inputs.data(),

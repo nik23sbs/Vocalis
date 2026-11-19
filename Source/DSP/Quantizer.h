@@ -36,6 +36,7 @@ struct ClipMarker
     int syllableIndex = -1;
     double gridBeat = 0.0;                 // posizione sulla griglia prima delle modifiche manuali
     bool muted = false;
+    int noteMidi = -1;                     // nota (Canto) o nota piu' vicina all'intonazione
 };
 
 struct QuantizedClip
