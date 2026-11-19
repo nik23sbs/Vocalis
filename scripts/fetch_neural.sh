@@ -36,9 +36,14 @@ done
 if [ ! -f "$DEST/models/kokoro-v1.0-ctrl.onnx" ]; then
   HERE="$(cd "$(dirname "$0")/.." && pwd)"
   [ -x "$DEST/venv/bin/python" ] || python3 -m venv "$DEST/venv"
-  "$DEST/venv/bin/python" -m pip install -q onnx==1.23.2 numpy onnxruntime
+  "$DEST/venv/bin/python" -m pip install -q onnx==1.23.2 numpy
   "$DEST/venv/bin/python" "$HERE/Tests/tools/kokoro_controllable.py" "$DEST/models/kokoro-v1.0.onnx" "$DEST/models/kokoro-v1.0-ctrl.onnx"
-  "$DEST/venv/bin/python" "$HERE/Tests/tools/kokoro_ctrl_check.py" "$DEST/models"
+  # verifica con onnxruntime (Python) se disponibile per questa piattaforma; il motore C++ viene comunque provato dai test
+  if "$DEST/venv/bin/python" -m pip install -q onnxruntime 2>/dev/null; then
+    "$DEST/venv/bin/python" "$HERE/Tests/tools/kokoro_ctrl_check.py" "$DEST/models"
+  else
+    echo "onnxruntime (Python) non disponibile qui: salto la verifica Python del modello"
+  fi
 fi
 rm -f "$DEST/models/kokoro-v1.0.onnx"
 ls -la "$DEST/ort/lib" "$DEST/models"
