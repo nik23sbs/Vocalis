@@ -61,3 +61,17 @@ Scelte del costruttore (da verificare con l'uso):
 - il nucleo si allunga al massimo 6x, oltre resta una pausa;
 - modello fp32 (326 MB) per la massima qualita'; installato una sola volta in /Library/Application Support/Vocalis/models;
 - ONNX Runtime 1.23 (ultima serie con macOS Intel), dylib dentro ogni bundle (Contents/Frameworks).
+
+# Vocalis 3 — voce a tempo senza tagli (2026-11-19)
+
+Progetto completo: `docs/superpowers/specs/2026-11-19-vocalis3-design.md`, piano: `docs/superpowers/plans/2026-11-19-vocalis3.md`.
+
+- Il grafo ONNX di Kokoro viene modificato (`Tests/tools/kokoro_controllable.py`): ingressi `dur_override`, `f0_override`,
+  `n_override` (+ `use_*`), uscite `f0` e `n`. Senza `use_*` il modello e' identico all'originale.
+- Prima passata: durate e intonazione predette. `TimingPlanner` mette ogni vocale sulla griglia (o sulla nota),
+  le consonanti tengono la durata naturale (nel Canto si accorciano), arrotondamento al frame da 25 ms con
+  diffusione dell'errore; poi un warp WSOLA continuo (rapporti ~ +-10 %) porta le vocali al campione giusto (+-5 ms).
+- Seconda passata: audio a tempo + F0 naturale. `PitchPlanner` costruisce la F0 finale (intonazione, modifiche,
+  note con glide e vibrato, sussurrato = F0 a zero); nel Canto l'energia N viene sostenuta sulle vocali lunghe.
+- Armonie e doppio = altre passate con le stesse durate e la F0 spostata (diatonica nella tonalita'), aperte in stereo.
+- Se il modello installato non e' controllabile (o manca), resta la catena della v2 (Quantizer + WORLD) ed eSpeak.

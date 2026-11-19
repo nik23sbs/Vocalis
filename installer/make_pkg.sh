@@ -45,7 +45,8 @@ component app  "$ART/Standalone/Vocalis.app"    /Applications
 MROOT="$WORK/root-models/Library/Application Support/Vocalis/models"
 mkdir -p "$MROOT"
 cp "$MODELS/kokoro-v1.0-ctrl.onnx" "$MODELS/voices-v1.0.bin" "$MROOT/"
-pkgbuild --root "$WORK/root-models" --identifier com.vocalis.models --version "$VERSION" --install-location / "$WORK/models.pkg"
+pkgbuild --root "$WORK/root-models" --identifier com.vocalis.models --version "$VERSION" --install-location / \
+         --scripts installer/scripts-models "$WORK/models.pkg"
 
 sed "s/@VERSION@/$VERSION/g" installer/Distribution.xml > "$WORK/Distribution.xml"
 productbuild --distribution "$WORK/Distribution.xml" --resources installer/resources \

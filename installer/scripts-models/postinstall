@@ -1,0 +1,6 @@
+#!/bin/bash
+# Vocalis 3 usa il modello "ctrl" (tempi e intonazione controllabili): toglie quello della versione 2 (~330 MB)
+OLD="/Library/Application Support/Vocalis/models/kokoro-v1.0.onnx"
+NEW="/Library/Application Support/Vocalis/models/kokoro-v1.0-ctrl.onnx"
+[ -f "$NEW" ] && rm -f "$OLD"
+exit 0
