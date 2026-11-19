@@ -9,22 +9,31 @@ case "$(uname -s)" in
   Linux)  PLATS="linux-x64" ;;
 esac
 if [ ! -d "$DEST/ort" ]; then
-  # versione piu' recente disponibile; su macOS preferisce l'universale (Intel + Apple Silicon) se esiste
-  TAGS=$(curl -fsSL "https://api.github.com/repos/microsoft/onnxruntime/releases?per_page=30" \
-         | grep -Eo '"tag_name": *"v1\.[0-9]+\.[0-9]+"' | grep -Eo 'v1\.[0-9]+\.[0-9]+' || true)
-  [ -n "$TAGS" ] || TAGS="v1.32.0 v1.31.0 v1.30.1 v1.30.0"
-  for T in $TAGS; do
-    V=${T#v}
-    for PLAT in $PLATS; do
-      F=onnxruntime-$PLAT-$V.tgz
-      if curl -fsSL -o "$DEST/$F" "https://github.com/microsoft/onnxruntime/releases/download/$T/$F"; then
-        tar xzf "$DEST/$F" -C "$DEST" && rm "$DEST/$F"
-        mv "$DEST/onnxruntime-$PLAT-$V" "$DEST/ort"
-        echo "ONNX Runtime $V ($PLAT)"
-        break 2
-      fi
-    done
+  # Elenco reale degli asset delle ultime release (i nomi cambiano tra le versioni)
+  AUTH=()
+  [ -n "${GITHUB_TOKEN:-}" ] && AUTH=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  curl -fsSL ${AUTH[@]+"${AUTH[@]}"} "https://api.github.com/repos/microsoft/onnxruntime/releases?per_page=15" -o "$DEST/releases.json"
+  URL=""
+  for PLAT in $PLATS; do
+    URL=$(python3 - "$DEST/releases.json" "$PLAT" <<'PY'
+import json, re, sys
+rel = json.load(open(sys.argv[1])); plat = sys.argv[2]
+pat = re.compile(r"^onnxruntime-" + re.escape(plat) + r"-(\d+\.\d+\.\d+)\.tgz$")
+for r in rel:
+    if r.get("prerelease") or r.get("draft"): continue
+    for a in r.get("assets", []):
+        if pat.match(a["name"]):
+            print(a["browser_download_url"]); sys.exit(0)
+PY
+)
+    [ -n "$URL" ] && break
   done
+  [ -n "$URL" ] || { echo "Nessun pacchetto ONNX Runtime trovato per $PLATS"; python3 -c "import json;[print(r['tag_name'],[a['name'] for a in r['assets']][:12]) for r in json.load(open('$DEST/releases.json'))[:3]]"; exit 1; }
+  echo "Scarico $URL"
+  F=$(basename "$URL")
+  curl -fsSL -o "$DEST/$F" "$URL"
+  tar xzf "$DEST/$F" -C "$DEST" && rm "$DEST/$F"
+  mv "$DEST/${F%.tgz}" "$DEST/ort"
 fi
 test -f "$DEST/ort/include/onnxruntime_cxx_api.h" || { echo "ONNX Runtime non scaricato"; exit 1; }
 for f in kokoro-v1.0.onnx voices-v1.0.bin; do

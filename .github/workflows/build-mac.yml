@@ -24,6 +24,8 @@ jobs:
             libxcomposite-dev libfontconfig1-dev libfreetype-dev libgl-dev libxext-dev
 
       - name: Dipendenze + ONNX Runtime + modello
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ./scripts/setup_deps.sh
           ./scripts/fetch_neural.sh neural
@@ -61,6 +63,8 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Dipendenze + ONNX Runtime + modello
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ./scripts/setup_deps.sh
           ./scripts/fetch_neural.sh neural
