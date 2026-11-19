@@ -69,6 +69,7 @@ set(VOCALIS_CORE_SOURCES
     Source/Engine/KokoroAligner.cpp
     Source/Engine/KokoroEngine.cpp
     Source/Engine/Syllabifier.cpp
+    Source/Engine/TokenSyllables.cpp
     Source/DSP/TimeStretch.cpp
     Source/DSP/Quantizer.cpp
     Source/DSP/GrooveExtractor.cpp
@@ -176,6 +177,14 @@ if(VOCALIS_BUILD_TESTS)
     if(VOCALIS_HAS_ORT)
         add_custom_command(TARGET VocalisCLI POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy "${ORT_LIB}" "$<TARGET_FILE_DIR:VocalisCLI>/")
     endif()
+endif()
+
+if(VOCALIS_BUILD_TESTS)
+    juce_add_console_app(VocalisUnitTest PRODUCT_NAME "VocalisUnitTest")
+    target_sources(VocalisUnitTest PRIVATE Tests/UnitTest.cpp ${VOCALIS_CORE_SOURCES})
+    vocalis_link_core(VocalisUnitTest)
+    target_compile_definitions(VocalisUnitTest PRIVATE JUCE_USE_CURL=0 JUCE_WEB_BROWSER=0)
+    target_link_libraries(VocalisUnitTest PRIVATE juce::juce_audio_utils juce::juce_dsp juce::juce_recommended_config_flags)
 endif()
 
 if(VOCALIS_BUILD_PLUGIN AND VOCALIS_BUILD_TESTS)

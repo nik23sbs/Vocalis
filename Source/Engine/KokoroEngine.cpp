@@ -78,7 +78,14 @@ namespace vocalis
 
 namespace
 {
+    const char* ctrlModelFileName = "kokoro-v1.0-ctrl.onnx";
     const char* modelFileName = "kokoro-v1.0.onnx";
+
+    juce::File modelFileIn (const juce::File& dir)
+    {
+        auto c = dir.getChildFile (ctrlModelFileName);
+        return c.existsAsFile() ? c : dir.getChildFile (modelFileName);
+    }
     const char* voicesFileName = "voices-v1.0.bin";
 
 #if VOCALIS_HAS_ORT
@@ -89,6 +96,7 @@ namespace
         std::unique_ptr<Ort::Env> env;
         std::unique_ptr<Ort::Session> session;
         juce::File loadedFrom;
+        bool controllable = false;
         KokoroVoices voices;
         juce::String error;
 
@@ -106,7 +114,7 @@ namespace
                 Ort::SessionOptions so;
                 so.SetIntraOpNumThreads (juce::jlimit (1, 8, juce::SystemStats::getNumPhysicalCpus()));
                 so.SetGraphOptimizationLevel (GraphOptimizationLevel::ORT_ENABLE_ALL);
-                const auto path = dir.getChildFile (modelFileName).getFullPathName();
+                const auto path = modelFileIn (dir).getFullPathName();
                #if JUCE_WINDOWS
                 session = std::make_unique<Ort::Session> (*env, path.toWideCharPointer(), so);
                #else
@@ -127,6 +135,7 @@ namespace
                 session.reset();
                 return false;
             }
+            controllable = session->GetInputCount() >= 7 && session->GetOutputCount() >= 3;
             loadedFrom = dir;
             error.clear();
             return true;
@@ -163,7 +172,7 @@ juce::File KokoroEngine::findModelDir()
     candidates.add (userData.getChildFile ("Vocalis/models"));
 
     for (auto& c : candidates)
-        if (c.getChildFile (modelFileName).existsAsFile() && c.getChildFile (voicesFileName).existsAsFile())
+        if (modelFileIn (c).existsAsFile() && c.getChildFile (voicesFileName).existsAsFile())
             return c;
     return {};
 }
@@ -187,6 +196,117 @@ bool KokoroEngine::isAvailable (juce::String* reason)
     }
     return true;
    #endif
+}
+
+bool KokoroEngine::isControllable()
+{
+   #if ! VOCALIS_HAS_ORT
+    return false;
+   #else
+    const auto dir = findModelDir();
+    if (dir == juce::File() || ! modelFileIn (dir).getFileName().contains ("ctrl"))
+        return false;
+    juce::String err;
+    if (! loadOrt (err) || ! shared().ensureLoaded (dir))
+        return false;
+    return shared().controllable;
+   #endif
+}
+
+KokoroChunkResult KokoroEngine::run (const juce::String& chunk, const VoiceMix& mix, float speed, int styleRowOffset,
+                                     const KokoroPass& pass, juce::String& error)
+{
+    KokoroChunkResult r;
+#if ! VOCALIS_HAS_ORT
+    juce::ignoreUnused (chunk, mix, speed, styleRowOffset, pass);
+    error = "Motore neurale non incluso in questa build";
+    return r;
+#else
+    const auto dir = findModelDir();
+    if (dir == juce::File()) { error = "Modello neurale non trovato"; return r; }
+    if (! loadOrt (error)) return r;
+    auto& m = shared();
+    if (! m.ensureLoaded (dir)) { error = m.error; return r; }
+    if (! m.controllable && (pass.useDur || pass.useF0)) { error = "Il modello installato non accetta tempi imposti"; return r; }
+
+    auto tokens = Phonemizer::tokenize (chunk);
+    if (tokens.empty()) { error = "Nessun fonema"; return r; }
+
+    std::vector<float> style;
+    if (! m.voices.styleFor (mix, (int) tokens.size(), styleRowOffset, style, error))
+        return r;
+
+    std::vector<int64_t> ids;
+    ids.reserve (tokens.size() + 2);
+    ids.push_back (0);
+    ids.insert (ids.end(), tokens.begin(), tokens.end());
+    ids.push_back (0);
+
+    if (pass.useDur && pass.durations.size() != ids.size())
+    {
+        error = "Durate imposte di lunghezza errata";
+        return r;
+    }
+    int64_t totalDur = 0;
+    for (auto d : pass.durations) totalDur += d;
+    if (pass.useF0 && (! pass.useDur || (int64_t) pass.f0.size() != 2 * totalDur))
+    {
+        error = "Curva F0 di lunghezza errata";
+        return r;
+    }
+
+    try
+    {
+        auto mem = Ort::MemoryInfo::CreateCpu (OrtArenaAllocator, OrtMemTypeDefault);
+        float spd = juce::jlimit (0.5f, 2.0f, speed);
+        int64_t noDur = 0; float noF0 = 0.0f;
+        bool useDur = pass.useDur, useF0 = pass.useF0;
+
+        const int64_t idShape[2] = { 1, (int64_t) ids.size() };
+        const int64_t styleShape[2] = { 1, (int64_t) KokoroVoices::styleDim };
+        const int64_t oneShape[1] = { 1 };
+        const int64_t durShape[1] = { useDur ? (int64_t) pass.durations.size() : 1 };
+        const int64_t f0Shape[2] = { 1, useF0 ? (int64_t) pass.f0.size() : 1 };
+
+        std::vector<Ort::Value> in;
+        in.push_back (Ort::Value::CreateTensor<int64_t> (mem, ids.data(), ids.size(), idShape, 2));
+        in.push_back (Ort::Value::CreateTensor<float> (mem, style.data(), style.size(), styleShape, 2));
+        in.push_back (Ort::Value::CreateTensor<float> (mem, &spd, 1, oneShape, 1));
+
+        std::vector<int64_t> durCopy = pass.durations;
+        std::vector<float> f0Copy = pass.f0;
+        if (m.controllable)
+        {
+            in.push_back (useDur ? Ort::Value::CreateTensor<int64_t> (mem, durCopy.data(), durCopy.size(), durShape, 1)
+                                 : Ort::Value::CreateTensor<int64_t> (mem, &noDur, 1, durShape, 1));
+            in.push_back (Ort::Value::CreateTensor<bool> (mem, &useDur, 1, oneShape, 0));
+            in.push_back (useF0 ? Ort::Value::CreateTensor<float> (mem, f0Copy.data(), f0Copy.size(), f0Shape, 2)
+                                : Ort::Value::CreateTensor<float> (mem, &noF0, 1, f0Shape, 2));
+            in.push_back (Ort::Value::CreateTensor<bool> (mem, &useF0, 1, oneShape, 0));
+        }
+
+        const char* inNames[] = { "input_ids", "style", "speed", "dur_override", "use_dur", "f0_override", "use_f0" };
+        const char* outNames[] = { "waveform", "duration", "f0" };
+        auto out = m.session->Run (Ort::RunOptions { nullptr }, inNames, in.data(), in.size(), outNames, m.controllable ? 3 : 2);
+
+        const float* wav = out[0].GetTensorData<float>();
+        r.audio.assign (wav, wav + out[0].GetTensorTypeAndShapeInfo().GetElementCount());
+        const int64_t* dur = out[1].GetTensorData<int64_t>();
+        r.durations.assign (dur, dur + out[1].GetTensorTypeAndShapeInfo().GetElementCount());
+        if (useDur) r.durations = pass.durations;   // l'uscita "duration" e' sempre quella predetta
+        if (m.controllable)
+        {
+            const float* f = out[2].GetTensorData<float>();
+            r.f0.assign (f, f + out[2].GetTensorTypeAndShapeInfo().GetElementCount());
+        }
+    }
+    catch (const std::exception& e)
+    {
+        error = juce::String ("Errore del motore neurale: ") + e.what();
+        r = {};
+    }
+    return r;
+#endif
 }
 
 SynthResult KokoroEngine::synthesize (const juce::String& text, const VoiceSettings& s)
@@ -233,6 +353,7 @@ SynthResult KokoroEngine::synthesize (const juce::String& text, const VoiceSetti
     {
         auto mem = Ort::MemoryInfo::CreateCpu (OrtArenaAllocator, OrtMemTypeDefault);
         const char* inNames[] = { "input_ids", "style", "speed" };
+        const char* ctrlInNames[] = { "input_ids", "style", "speed", "dur_override", "use_dur", "f0_override", "use_f0" };
         const char* outNames[] = { "waveform", "duration" };
 
         for (auto chunk : Phonemizer::splitForModel (phonemes))
@@ -242,7 +363,7 @@ SynthResult KokoroEngine::synthesize (const juce::String& text, const VoiceSetti
 
             std::vector<float> style;
             juce::String verr;
-            if (! m.voices.styleFor (s.voiceA, s.voiceB, s.blend, (int) tokens.size(), style, verr))
+            if (! m.voices.styleFor (s.mix, (int) tokens.size(), s.variant, style, verr))
             {
                 result.error = verr;
                 return result;
@@ -263,8 +384,18 @@ SynthResult KokoroEngine::synthesize (const juce::String& text, const VoiceSetti
             inputs.push_back (Ort::Value::CreateTensor<int64_t> (mem, ids.data(), ids.size(), idShape, 2));
             inputs.push_back (Ort::Value::CreateTensor<float> (mem, style.data(), style.size(), styleShape, 2));
             inputs.push_back (Ort::Value::CreateTensor<float> (mem, &speed, 1, speedShape, 1));
+            int64_t noDur = 0; float noF0 = 0.0f; bool off = false;
+            const int64_t oneShape[1] = { 1 }, f0Shape[2] = { 1, 1 };
+            if (m.controllable)
+            {
+                inputs.push_back (Ort::Value::CreateTensor<int64_t> (mem, &noDur, 1, oneShape, 1));
+                inputs.push_back (Ort::Value::CreateTensor<bool> (mem, &off, 1, oneShape, 0));
+                inputs.push_back (Ort::Value::CreateTensor<float> (mem, &noF0, 1, f0Shape, 2));
+                inputs.push_back (Ort::Value::CreateTensor<bool> (mem, &off, 1, oneShape, 0));
+            }
 
-            auto outputs = m.session->Run (Ort::RunOptions { nullptr }, inNames, inputs.data(), inputs.size(), outNames, 2);
+            auto outputs = m.session->Run (Ort::RunOptions { nullptr }, m.controllable ? ctrlInNames : inNames, inputs.data(),
+                                           inputs.size(), outNames, 2);
 
             const float* wav = outputs[0].GetTensorData<float>();
             const size_t numWav = outputs[0].GetTensorTypeAndShapeInfo().GetElementCount();

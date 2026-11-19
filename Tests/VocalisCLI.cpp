@@ -11,6 +11,7 @@
 #include "Engine/Phonemizer.h"
 #include "Engine/KokoroAligner.h"
 #include "Engine/Syllabifier.h"
+#include "Engine/TokenSyllables.h"
 #include "DSP/EffectsChain.h"
 #include "DSP/Loudness.h"
 #include <iostream>
@@ -66,6 +67,40 @@ int main (int argc, char** argv)
         return 0;
     }
 
+    if (args.contains ("--token-syllables"))
+    {
+        const auto ps = Phonemizer::phonemize (opt ("--token-syllables", ""), opt ("--lang", "it"), {});
+        for (auto& t : TokenSyllables::build (ps))
+            std::cout << t.label << (t.stressed ? "'" : "") << (t.pauseSteps > 0 ? " +" + juce::String (t.pauseSteps) : juce::String()) << "\n";
+        return 0;
+    }
+
+    if (args.contains ("--kokoro-run"))
+    {
+        // prova del modello controllabile: passata naturale, poi durate imposte (+1 frame su ogni vocale) e F0 +4 st
+        KokoroEngine k;
+        std::cout << "Controllabile: " << (KokoroEngine::isControllable() ? "si" : "no") << "\n";
+        const auto ps = Phonemizer::filterToVocab (Phonemizer::phonemize (opt ("--kokoro-run", "Ciao a tutti."), "it", {}));
+        VoiceMix mix; mix.id[0] = opt ("--voice", "if_sara");
+        juce::String err;
+        auto a = k.run (ps, mix, 1.0f, 0, {}, err);
+        if (err.isNotEmpty()) { std::cout << "ERRORE: " << err << "\n"; return 2; }
+        KokoroPass p; p.useDur = true; p.durations = a.durations;
+        for (int i = 0; i < ps.length(); ++i)
+            if (TokenSyllables::isVowel (ps[i])) p.durations[(size_t) i + 1] = juce::jmax ((int64_t) 1, p.durations[(size_t) i + 1]) + 1;
+        int64_t tot = 0; for (auto d : p.durations) tot += d;
+        auto b = k.run (ps, mix, 1.0f, 0, p, err);
+        if (err.isNotEmpty()) { std::cout << "ERRORE: " << err << "\n"; return 2; }
+        const bool durOk = std::abs ((int64_t) b.audio.size() - tot * KokoroEngine::samplesPerFrame) <= KokoroEngine::samplesPerFrame;
+        const bool f0Ok = (int64_t) b.f0.size() == 2 * tot;
+        p.useF0 = true; p.f0 = b.f0;
+        for (auto& f : p.f0) f *= std::pow (2.0f, 4.0f / 12.0f);
+        auto c = k.run (ps, mix, 1.0f, 3, p, err);
+        std::cout << "Durate imposte: " << (durOk ? "ok" : "ERRATE") << "  F0: " << (f0Ok ? "ok" : "ERRATA")
+                  << "  armonia: " << (c.audio.size() == b.audio.size() ? "ok" : "ERRATA") << " " << err << "\n";
+        return durOk && f0Ok && err.isEmpty() ? 0 : 3;
+    }
+
     if (args.size() < 2)
     {
         std::cout << "Uso: VocalisCLI \"testo\" out.wav [opzioni]\n";
@@ -78,9 +113,13 @@ int main (int argc, char** argv)
 
     auto& v = r.voice;
     v.engine = opt ("--engine", "neural") == "formant" ? EngineType::Formant : EngineType::Neural;
-    v.voiceA = opt ("--voice", "if_sara");
-    v.voiceB = opt ("--voiceB", "");
-    v.blend = opt ("--blend", "0").getFloatValue();
+    {
+        const float blend = juce::jlimit (0.0f, 1.0f, opt ("--blend", "0").getFloatValue());
+        v.mix.id[0] = opt ("--voice", "if_sara"); v.mix.w[0] = 1.0f - blend;
+        v.mix.id[1] = opt ("--voiceB", ""); v.mix.w[1] = blend;
+        if (v.mix.id[1].isEmpty()) v.mix.w[0] = 1.0f;
+        v.variant = opt ("--seed", "0").getIntValue();
+    }
     v.language = opt ("--lang", "it");
     v.speed = opt ("--speed", "1").getFloatValue();
     v.pitchSemis = opt ("--pitch", "0").getFloatValue();

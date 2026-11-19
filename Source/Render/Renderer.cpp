@@ -78,7 +78,7 @@ std::shared_ptr<SynthResult> Renderer::synthesise (const RenderRequest& r, juce:
         // riserva: voce eSpeak dello stesso genere
         bool male = false;
         for (auto& info : KokoroVoices::catalogue())
-            if (v.voiceA == info.id) male = info.male;
+            if (v.primaryVoice() == info.id) male = info.male;
         v.engine = EngineType::Formant;
         v.espeakVariant = male ? "m3" : "f3";
     }

@@ -1,5 +1,5 @@
 #pragma once
-#include <juce_core/juce_core.h>
+#include "VoiceTypes.h"
 #include <map>
 #include <mutex>
 #include <vector>
@@ -20,6 +20,10 @@ public:
     /** Vettore di stile per una frase di numTokens fonemi (riga numTokens-1), con miscela opzionale. */
     bool styleFor (const juce::String& voiceA, const juce::String& voiceB, float blend, int numTokens,
                    std::vector<float>& out, juce::String& error);
+
+    /** Miscela fino a 4 voci (pesi normalizzati, voci senza nome o con peso 0 ignorate).
+        rowOffset sposta la riga dello stile: e' il "seme" delle varianti (interpretazioni diverse). */
+    bool styleFor (const VoiceMix& mix, int numTokens, int rowOffset, std::vector<float>& out, juce::String& error);
 
     juce::StringArray voiceNames() const;
 

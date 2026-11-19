@@ -195,10 +195,11 @@ RenderRequest VocalisProcessor::buildRequest() const
 
     const auto& cat = KokoroVoices::catalogue();
     r.voice.engine = (int) v (IDs::engine) == 0 ? EngineType::Neural : EngineType::Formant;
-    r.voice.voiceA = cat[(size_t) juce::jlimit (0, (int) cat.size() - 1, (int) v (IDs::voiceA))].id;
+    r.voice.mix.id[0] = cat[(size_t) juce::jlimit (0, (int) cat.size() - 1, (int) v (IDs::voiceA))].id;
     const int vb = (int) v (IDs::voiceB);
-    r.voice.voiceB = vb > 0 ? juce::String (cat[(size_t) juce::jlimit (0, (int) cat.size() - 1, vb - 1)].id) : juce::String();
-    r.voice.blend = v (IDs::blend) / 100.0f;
+    r.voice.mix.id[1] = vb > 0 ? juce::String (cat[(size_t) juce::jlimit (0, (int) cat.size() - 1, vb - 1)].id) : juce::String();
+    r.voice.mix.w[1] = v (IDs::blend) / 100.0f;
+    r.voice.mix.w[0] = 1.0f - r.voice.mix.w[1];
     r.voice.espeakVariant = robotVariantId ((int) v (IDs::robotVariant));
     const auto& langs = ESpeakEngine::languages();
     r.voice.language = langs[(size_t) juce::jlimit (0, (int) langs.size() - 1, (int) v (IDs::language))].id;

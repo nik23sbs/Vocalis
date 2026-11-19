@@ -33,7 +33,7 @@ jobs:
       - name: Compila (con motore neurale)
         run: |
           cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DVOCALIS_ORT_DIR="$PWD/neural/ort"
-          cmake --build build --target VocalisCLI VocalisHostTest Vocalis_VST3
+          cmake --build build --target VocalisCLI VocalisUnitTest VocalisHostTest Vocalis_VST3
 
       - name: Test voce neurale
         env:
@@ -43,6 +43,8 @@ jobs:
           mkdir -p /tmp/out
           C=./build/VocalisCLI_artefacts/Release/VocalisCLI
           $C --phonemize "Ciao a tutti, questa è la voce del plugin Vocalis."
+          ./build/VocalisUnitTest_artefacts/Release/VocalisUnitTest
+          $C --kokoro-run "Ciao a tutti, questa è la nuova voce."
           $C "Ciao a tutti, questa è la voce del plugin Vocalis. Andiamo a tempo!" /tmp/out/sara.wav --voice if_sara --syllables | tee /tmp/out/sara.txt
           grep -q "Motore: Kokoro" /tmp/out/sara.txt
           $C "Ciao a tutti, sono Nicola." /tmp/out/nicola.wav --voice im_nicola --mode free | tee /tmp/out/nicola.txt
@@ -74,7 +76,7 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DVOCALIS_BUILD_TESTS=ON -DVOCALIS_ORT_DIR="$PWD/neural/ort"
 
       - name: Compila
-        run: cmake --build build --target Vocalis_VST3 Vocalis_AU Vocalis_Standalone VocalisHostTest VocalisCLI -j "$(sysctl -n hw.ncpu)"
+        run: cmake --build build --target Vocalis_VST3 Vocalis_AU Vocalis_Standalone VocalisHostTest VocalisCLI VocalisUnitTest -j "$(sysctl -n hw.ncpu)"
 
       - name: Verifica architetture e contenuto dei bundle
         run: |
@@ -89,6 +91,8 @@ jobs:
           VOCALIS_ESPEAK_DATA: ${{ github.workspace }}/build/third_party/espeak-ng
         run: |
           mkdir -p /tmp/out
+          ./build/VocalisUnitTest_artefacts/Release/VocalisUnitTest
+          ./build/VocalisCLI_artefacts/Release/VocalisCLI --kokoro-run "Prova della voce a tempo."
           ./build/VocalisCLI_artefacts/Release/VocalisCLI "Prova della voce neurale su Mac." /tmp/out/mac.wav | tee /tmp/out/mac.txt
           grep -q "Motore: Kokoro" /tmp/out/mac.txt
           ./build/VocalisHostTest_artefacts/Release/VocalisHostTest

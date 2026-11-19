@@ -30,6 +30,20 @@ struct Syllable
     int codaLength() const  { return end - nucleusEnd; }
 };
 
+/** Miscela di fino a 4 voci neurali (sfera voce). */
+struct VoiceMix
+{
+    juce::String id[4];
+    float w[4] = { 1.0f, 0.0f, 0.0f, 0.0f };
+
+    juce::String key() const
+    {
+        juce::String k;
+        for (int i = 0; i < 4; ++i) if (id[i].isNotEmpty() && w[i] > 1.0e-4f) k << id[i] << ":" << juce::String (w[i], 3) << ",";
+        return k;
+    }
+};
+
 enum class EngineType { Neural = 0, Formant };
 enum class VoiceType { Male = 0, Female, Robot };
 
@@ -56,10 +70,17 @@ struct VoiceSettings
     juce::String language = "it";     // lingua del testo (fonetica)
 
     // Neurale (Kokoro)
-    juce::String voiceA = "if_sara";
-    juce::String voiceB;              // vuoto = nessuna miscela
-    float blend = 0.0f;               // 0 = solo A, 1 = solo B
+    VoiceMix mix { { "if_sara", {}, {}, {} }, { 1.0f, 0.0f, 0.0f, 0.0f } };
+    int variant = 0;                  // seme delle varianti (riga dello stile)
     float speed = 1.0f;               // 0.5 .. 2
+
+    /** Voce con il peso maggiore (per la voce eSpeak di riserva e le etichette). */
+    juce::String primaryVoice() const
+    {
+        int best = 0;
+        for (int i = 1; i < 4; ++i) if (mix.id[i].isNotEmpty() && mix.w[i] > mix.w[best]) best = i;
+        return mix.id[best];
+    }
 
     // Formant (eSpeak, voci robot)
     juce::String espeakVariant = "UniRobot";
@@ -77,8 +98,8 @@ struct VoiceSettings
 
     juce::String synthKey (const juce::String& text) const
     {
-        return text + "|" + dictionary + "|" + juce::String ((int) engine) + "|" + language + "|" + voiceA + "|" + voiceB
-             + "|" + juce::String (blend, 3) + "|" + juce::String (speed, 3) + "|" + espeakVariant + "|"
+        return text + "|" + dictionary + "|" + juce::String ((int) engine) + "|" + language + "|" + mix.key()
+             + "|v" + juce::String (variant) + "|" + juce::String (speed, 3) + "|" + espeakVariant + "|"
              + juce::String (espeakPitch) + "|" + juce::String (espeakRate);
     }
 

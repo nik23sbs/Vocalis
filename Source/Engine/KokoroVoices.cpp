@@ -105,6 +105,33 @@ bool KokoroVoices::styleFor (const juce::String& voiceA, const juce::String& voi
     return true;
 }
 
+bool KokoroVoices::styleFor (const VoiceMix& mix, int numTokens, int rowOffset, std::vector<float>& out, juce::String& error)
+{
+    std::lock_guard<std::mutex> l (lock);
+    float total = 0.0f;
+    for (int k = 0; k < 4; ++k)
+        if (mix.id[k].isNotEmpty() && mix.w[k] > 1.0e-4f) total += mix.w[k];
+    if (total <= 0.0f)
+    {
+        error = "Nessuna voce selezionata";
+        return false;
+    }
+
+    out.assign ((size_t) styleDim, 0.0f);
+    for (int k = 0; k < 4; ++k)
+    {
+        if (mix.id[k].isEmpty() || mix.w[k] <= 1.0e-4f) continue;
+        const auto* d = load (mix.id[k], error);
+        if (d == nullptr) return false;
+        const int rows = (int) (d->size() / styleDim);
+        const int row = juce::jlimit (0, rows - 1, numTokens - 1 + rowOffset);
+        const float w = mix.w[k] / total;
+        for (int i = 0; i < styleDim; ++i)
+            out[(size_t) i] += (*d)[(size_t) (row * styleDim + i)] * w;
+    }
+    return true;
+}
+
 const std::vector<KokoroVoices::VoiceInfo>& KokoroVoices::catalogue()
 {
     static const std::vector<VoiceInfo> c {
