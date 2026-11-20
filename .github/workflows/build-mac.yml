@@ -9,8 +9,17 @@ on:
         description: "Runner macOS"
         default: "macos-15"
       jobs:
-        description: "Job da eseguire (all, oppure linux, mac, windows separati da virgola)"
+        description: "Job da eseguire (all, oppure linux, mac, windows, release separati da virgola)"
         default: "all"
+      mac_run:
+        description: "Solo release: ID della build con Vocalis-macOS"
+        default: ""
+      win_run:
+        description: "Solo release: ID della build con Vocalis-Windows"
+        default: ""
+      tag:
+        description: "Solo release: versione"
+        default: "v0.3.0"
 
 jobs:
   # ------------------------------------------------------------------ Linux: test del motore neurale reale
@@ -237,3 +246,28 @@ jobs:
           name: Vocalis-Windows
           path: dist/*.exe
 
+  # ------------------------------------------------------------------ Release con gli installer di build gia' riuscite
+  release:
+    if: ${{ github.event_name == 'workflow_dispatch' && contains(inputs.jobs, 'release') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Scarica gli installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ inputs.mac_run }}" -R "$GITHUB_REPOSITORY" -n Vocalis-macOS -D mac
+          gh run download "${{ inputs.win_run }}" -R "$GITHUB_REPOSITORY" -n Vocalis-Windows -D win
+          find mac win -type f -exec ls -la {} \;
+      - name: Crea la Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FILES=$(find mac win -type f \( -name "*.pkg" -o -name "*.exe" \))
+          gh release delete "${{ inputs.tag }}" -R "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "${{ inputs.tag }}" $FILES -R "$GITHUB_REPOSITORY" --target "${{ github.sha }}" \
+            --title "Vocalis 3 (${{ inputs.tag }})" \
+            --notes "Installer di Vocalis 3. Mac: apri il file .pkg (se macOS lo blocca: tasto destro > Apri). Windows: apri il file .exe (se compare 'Windows ha protetto il PC': Ulteriori informazioni > Esegui comunque)."
+          gh release view "${{ inputs.tag }}" -R "$GITHUB_REPOSITORY" --json assets -q '.assets[] | .name + " " + (.size|tostring) + " " + .url'
