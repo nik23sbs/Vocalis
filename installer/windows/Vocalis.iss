@@ -1,7 +1,7 @@
 ; Installer Windows di Vocalis (Inno Setup 6)
 ; ISCC /DVersion=0.3.0 /DArt=<cartella artefatti Release> /DModels=<cartella modelli> installer\windows\Vocalis.iss
 #ifndef Version
-  #define Version "0.3.0"
+  #define Version "0.3.1"
 #endif
 
 [Setup]
