@@ -65,6 +65,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout VocalisProcessor::createLayo
     // Voce
     choice (IDs::engine, "Motore", { "Neurale", "Robot / Formant" }, 0);
     choice (IDs::mode, "Modalita'", { "Parlato", "Rap", "Canto" }, 1);
+    choice (IDs::attack, "Attacco", { "Sul battere", "Anticipato" }, 0);
+    flt (IDs::vocalShift, "Spostamento vocal", { -8.0f, 8.0f, 0.03125f }, 0.0f, AudioParameterFloatAttributes().withLabel ("quarti"));
     choice (IDs::voiceA, "Voce A", neuralVoiceNames(), 0);
     { auto names = neuralVoiceNames(); names.insert (0, "Nessuna");
       choice (IDs::voiceB, "Voce B", names, 2);     // Nicola
@@ -255,6 +257,8 @@ RenderRequest VocalisProcessor::buildRequest() const
     r.mode = (VocalMode) juce::jlimit (0, 2, (int) v (IDs::mode));
     r.rhythm.mode = r.mode == VocalMode::Parlato ? RhythmSettings::Mode::Free : RhythmSettings::Mode::Grid;
     r.notes = melody;
+    r.anticipate = (int) v (IDs::attack) == 1;
+    r.vocalShiftBeats = v (IDs::vocalShift);
     r.vibratoCents = juce::jmax (0.0f, v (IDs::vibrato) * (0.5f + expr));
     r.glideMs = v (IDs::glide);
     r.expressivity = 0.6f * expr;
@@ -285,7 +289,7 @@ RenderRequest VocalisProcessor::buildRequest() const
 juce::String VocalisProcessor::requestSignature() const
 {
     const char* ids[] = { IDs::engine, IDs::voiceA, IDs::voiceB, IDs::voiceC, IDs::voiceD, IDs::orbX, IDs::orbY, IDs::variant,
-                          IDs::robotVariant, IDs::language, IDs::speed, IDs::mode,
+                          IDs::robotVariant, IDs::language, IDs::speed, IDs::mode, IDs::attack, IDs::vocalShift,
                           IDs::pitch, IDs::intonation, IDs::formant, IDs::robotize, IDs::robotHz,
                           IDs::division, IDs::stepsPerSyl, IDs::swing, IDs::legato, IDs::stretch, IDs::pCenter,
                           IDs::grooveAmt, IDs::accentAmt, IDs::loudness, IDs::vibrato, IDs::glide, IDs::key, IDs::scale,

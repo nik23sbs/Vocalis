@@ -38,12 +38,13 @@ public:
     void refresh();
 private:
     VocalisProcessor& proc;
-    LabelledCombo division, bpmSource, playMode, loudness;
+    LabelledCombo division, bpmSource, playMode, loudness, attack;
     LabelledKnob steps, swing, legato, groove, accents, bpm;
     GrooveView grooveView;
     juce::Slider startBar { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };
     juce::ToggleButton loop { "Loop" };
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> startAtt;
+    juce::Slider shift { juce::Slider::IncDecButtons, juce::Slider::TextBoxLeft };
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> startAtt, shiftAtt;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> loopAtt;
 };
 

@@ -16,7 +16,8 @@ juce::String Timeline::noteName (int midi)
 Timeline::Timeline (VocalisProcessor& p) : proc (p)
 {
     setTooltip ("Sillabe: trascina = sposta, bordo = durata, Shift = intonazione, rotella = volume, doppio clic = muta, "
-                "tasto destro = menu. Note: trascina in verticale. Trascina qui un file MIDI per la melodia.");
+                "tasto destro = menu. Note: trascina (altezza e posizione). Punto vuoto: trascina tutto il vocal. "
+                "Trascina qui un file MIDI per la melodia.");
     startTimerHz (30);
 }
 
@@ -94,9 +95,10 @@ juce::Rectangle<float> Timeline::blockBounds (int i) const
     float x0 = sampleToX (m.start), x1 = sampleToX (m.end);
     if (i == dragIndex)
     {
-        if (drag == Drag::Move) { x0 += dragDx; x1 += dragDx; }
+        if (drag == Drag::Move || drag == Drag::Note) { x0 += dragDx; x1 += dragDx; }
         if (drag == Drag::Resize) x1 = juce::jmax (x0 + 6.0f, x1 + dragDx);
     }
+    if (drag == Drag::Vocal) { x0 += dragDx; x1 += dragDx; }
     return { x0, lane.getY(), juce::jmax (4.0f, x1 - x0 - 2.0f), lane.getHeight() };
 }
 
@@ -129,6 +131,17 @@ int Timeline::noteAt (juce::Point<float> p) const
             return i;
     }
     return -1;
+}
+
+juce::Point<float> Timeline::noteCentreForTest (int i) const
+{
+    const auto& m = clip->markers[(size_t) i];
+    return { 0.5f * (sampleToX (m.nucleus) + sampleToX (m.end)), midiToY ((float) displayNote (i)) };
+}
+
+double Timeline::beatsPerPixelForTest() const
+{
+    return clip == nullptr ? 0.0 : (clip->lengthBeats + clip->prerollBeats) / juce::jmax (1, getWidth());
 }
 
 void Timeline::timerCallback()
@@ -231,7 +244,8 @@ void Timeline::paint (juce::Graphics& g)
         if (i == dragIndex && drag == Drag::Note) n = juce::jlimit (24, 96, dragStartEdit.note >= 0 ? dragStartEdit.note : n) - (int) std::round (dragDy / juce::jmax (2.0f, roll.getHeight() / (highMidi - lowMidi)));
         const auto e = proc.getEdit (m.syllableIndex);
         const float y = midiToY ((float) n);
-        auto nb = juce::Rectangle<float> (sampleToX (m.nucleus), y - 6.0f, juce::jmax (6.0f, sampleToX (m.end) - sampleToX (m.nucleus) - 2.0f), 12.0f);
+        auto nb = juce::Rectangle<float> (sampleToX (m.nucleus) + ((i == dragIndex && drag == Drag::Note) || drag == Drag::Vocal ? dragDx : 0.0f), y - 6.0f,
+                                          juce::jmax (6.0f, sampleToX (m.end) - sampleToX (m.nucleus) - 2.0f), 12.0f);
         const bool sel = m.syllableIndex == selected;
         const juce::Colour c = e.note >= 0 || std::abs (e.pitchSemis) > 0.05f ? Colours::warn : Colours::accent;
         g.setColour (c.withAlpha (canto ? (sel ? 1.0f : 0.85f) : 0.35f));
@@ -311,8 +325,17 @@ void Timeline::paint (juce::Graphics& g)
     }
 }
 
+juce::String Timeline::getTooltip()
+{
+    if (clip != nullptr && clip->prerollBeats > 0.0 && lastMouse.x < sampleToX (clip->prerollBeats * samplesPerBeat()))
+        return "Anticipo: le consonanti iniziali partono prima del battere, cosi' la prima vocale cade a tempo. "
+               "Si toglie in Ritmo > Attacco della frase > Sul battere.";
+    return SettableTooltipClient::getTooltip();
+}
+
 void Timeline::mouseMove (const juce::MouseEvent& e)
 {
+    lastMouse = e.position;
     bool edge = false;
     const int i = markerAt (e.position, edge);
     if (i != hover) { hover = i; repaint(); }
@@ -331,7 +354,15 @@ void Timeline::mouseDown (const juce::MouseEvent& e)
     const int n = i < 0 ? noteAt (e.position) : -1;
     if (i < 0 && n < 0)
     {
-        if (selected >= 0) { selected = -1; if (onSelect) onSelect (-1); repaint(); }
+        if (selected >= 0) { selected = -1; if (onSelect) onSelect (-1); }
+        // punto vuoto del piano roll / forma d'onda: si trascina tutto il vocal
+        if (rollArea().contains (e.position) && ! e.mods.isPopupMenu())
+        {
+            drag = Drag::Vocal;
+            dragIndex = -2;
+            dragDx = dragDy = 0;
+        }
+        repaint();
         return;
     }
     if (i < 0) i = n;
@@ -351,11 +382,19 @@ void Timeline::mouseDown (const juce::MouseEvent& e)
 
 void Timeline::mouseDrag (const juce::MouseEvent& e)
 {
-    if (dragIndex < 0 || clip == nullptr) return;
+    if ((dragIndex < 0 && drag != Drag::Vocal) || clip == nullptr) return;
     const double total = clip->lengthBeats + clip->prerollBeats;
     const double beatsPerPx = total / juce::jmax (1, getWidth());
+    lastAlt = e.mods.isAltDown();
 
-    if (drag == Drag::Move)
+    if (drag == Drag::Vocal)
+    {
+        double beats = e.getDistanceFromDragStartX() * beatsPerPx;
+        if (! e.mods.isAltDown()) beats = std::round (beats * 8.0) / 8.0;
+        dragDx = (float) (beats / beatsPerPx);
+        dragInfo = "sposta tutto il vocal " + juce::String (beats >= 0 ? "+" : "") + juce::String (beats * 4.0, 2) + " sedicesimi";
+    }
+    else if (drag == Drag::Move)
     {
         double beats = e.getDistanceFromDragStartX() * beatsPerPx;
         if (! e.mods.isAltDown()) beats = std::round (beats * 8.0) / 8.0;
@@ -378,19 +417,39 @@ void Timeline::mouseDrag (const juce::MouseEvent& e)
     }
     else if (drag == Drag::Note)
     {
+        // la nota si sposta come la sillaba (in orizzontale, a 1/32) e cambia altezza (in verticale, a semitoni)
         dragDy = (float) e.getDistanceFromDragStartY();
+        double beats = e.getDistanceFromDragStartX() * beatsPerPx;
+        if (! e.mods.isAltDown()) beats = std::round (beats * 8.0) / 8.0;
+        dragDx = (float) (beats / beatsPerPx);
         const float px = rollArea().getHeight() / juce::jmax (1.0f, highMidi - lowMidi);
         const int steps = (int) std::round (-dragDy / juce::jmax (2.0f, px));
-        if (dragStartEdit.note >= 0)
-            dragInfo = "nota " + noteName (juce::jlimit (24, 96, dragStartEdit.note + steps));
-        else
-            dragInfo = "intonazione " + juce::String (dragStartEdit.pitchSemis + steps, 0) + " semitoni";
+        juce::String t = dragStartEdit.note >= 0 ? "nota " + noteName (juce::jlimit (24, 96, dragStartEdit.note + steps))
+                                                 : "intonazione " + juce::String (dragStartEdit.pitchSemis + steps, 0) + " semitoni";
+        if (std::abs (beats) > 1e-6) t << "  -  sposta " << (beats >= 0 ? "+" : "") << juce::String (beats * 4.0, 2) << " sedicesimi";
+        dragInfo = t;
     }
     repaint();
 }
 
 void Timeline::mouseUp (const juce::MouseEvent&)
 {
+    if (drag == Drag::Vocal && clip != nullptr)
+    {
+        const double beatsPerPx = (clip->lengthBeats + clip->prerollBeats) / juce::jmax (1, getWidth());
+        if (std::abs (dragDx) > 0.5f)
+            if (auto* p = proc.apvts.getParameter (IDs::vocalShift))
+            {
+                const float now = proc.apvts.getRawParameterValue (IDs::vocalShift)->load();
+                p->beginChangeGesture();
+                p->setValueNotifyingHost (p->convertTo0to1 ((float) juce::jlimit (-8.0, 8.0, now + dragDx * beatsPerPx)));
+                p->endChangeGesture();
+                dragInfo = "rigenero...";
+            }
+        drag = Drag::None; dragIndex = -1; dragDx = 0;
+        repaint();
+        return;
+    }
     if (dragIndex < 0 || clip == nullptr) { drag = Drag::None; return; }
     const auto& m = clip->markers[(size_t) dragIndex];
     auto edit = dragStartEdit;
@@ -402,7 +461,15 @@ void Timeline::mouseUp (const juce::MouseEvent&)
     else if (drag == Drag::Resize && std::abs (dragDx) > 0.5f)
     {
         const float orig = sampleToX (m.end) - sampleToX (m.start);
-        edit.lengthScale = juce::jlimit (0.15, 8.0, edit.lengthScale * juce::jmax (6.0f, orig + dragDx) / juce::jmax (1.0f, orig));
+        double scale = juce::jlimit (0.15, 8.0, edit.lengthScale * juce::jmax (6.0f, orig + dragDx) / juce::jmax (1.0f, orig));
+        // sulla griglia (Rap/Canto) la durata si aggancia a 1/32: le sillabe dopo restano sulla griglia
+        const int mode = (int) proc.apvts.getRawParameterValue (IDs::mode)->load();
+        if (mode != 0 && ! lastAlt)
+        {
+            const double slot = juce::jmax (1.0 / 64.0, clip->stepBeats) * juce::jmax (1.0f, proc.apvts.getRawParameterValue (IDs::stepsPerSyl)->load());
+            scale = juce::jmax (0.125, std::round (slot * scale * 8.0) / 8.0) / slot;
+        }
+        edit.lengthScale = juce::jlimit (0.1, 8.0, scale);
         changed = true;
     }
     else if (drag == Drag::Pitch && std::abs (dragDy) > 0.5f)
@@ -410,13 +477,17 @@ void Timeline::mouseUp (const juce::MouseEvent&)
         edit.pitchSemis = juce::jlimit (-24.0f, 24.0f, dragStartEdit.pitchSemis - dragDy / 6.0f);
         changed = true;
     }
-    else if (drag == Drag::Note && std::abs (dragDy) > 2.0f)
+    else if (drag == Drag::Note)
     {
         const float px = rollArea().getHeight() / juce::jmax (1.0f, highMidi - lowMidi);
-        const int steps = (int) std::round (-dragDy / juce::jmax (2.0f, px));
-        if (edit.note >= 0) edit.note = juce::jlimit (24, 96, edit.note + steps);
-        else edit.pitchSemis = juce::jlimit (-24.0f, 24.0f, edit.pitchSemis + (float) steps);
-        changed = steps != 0;
+        const int steps = std::abs (dragDy) > 2.0f ? (int) std::round (-dragDy / juce::jmax (2.0f, px)) : 0;
+        if (steps != 0)
+        {
+            if (edit.note >= 0) edit.note = juce::jlimit (24, 96, edit.note + steps);
+            else edit.pitchSemis = juce::jlimit (-24.0f, 24.0f, edit.pitchSemis + (float) steps);
+            changed = true;
+        }
+        if (std::abs (dragDx) > 0.5f) { edit.shiftBeats += dragDx * beatsPerPx; changed = true; }
     }
 
     if (changed) proc.setEdit (m.syllableIndex, edit);
@@ -431,6 +502,11 @@ void Timeline::mouseDoubleClick (const juce::MouseEvent& e)
 {
     bool edge = false;
     const int i = markerAt (e.position, edge);
+    if (i < 0 && noteAt (e.position) < 0 && rollArea().contains (e.position))
+    {
+        if (auto* p = proc.apvts.getParameter (IDs::vocalShift)) p->setValueNotifyingHost (p->convertTo0to1 (0.0f));   // vocal a posto
+        return;
+    }
     if (i < 0 || clip == nullptr) return;
     auto ed = proc.getEdit (clip->markers[(size_t) i].syllableIndex);
     ed.muted = ! ed.muted;

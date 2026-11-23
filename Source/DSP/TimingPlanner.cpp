@@ -7,6 +7,18 @@ namespace vocalis
 
 namespace
 {
+    bool isStress (juce::juce_wchar c);
+    int naturalFrames (int64_t predicted, float scale);
+
+    /** Frame delle consonanti iniziali della prima sillaba (il silenzio iniziale del modello si puo' tagliare). */
+    double onsetFrames (const std::vector<int64_t>& predicted, const std::vector<TokenSyllable>& sylls)
+    {
+        double lead = 0.0;
+        for (int i = 0; i < sylls[0].nucleusFirst && i + 1 < (int) predicted.size(); ++i)
+            lead += (double) juce::jmax (0, naturalFrames (predicted[(size_t) i + 1], 1.0f));
+        return lead;
+    }
+
     bool isPunct (juce::juce_wchar c) { return juce::String (juce::CharPointer_UTF8 (";:,.!?—…\"()“”«»")).containsChar (c); }
     bool isStress (juce::juce_wchar c) { return c == 0x02C8 || c == 0x02CC; }
     int naturalFrames (int64_t predicted, float scale) { return (int) std::lround ((double) predicted * scale); }
@@ -27,8 +39,14 @@ std::vector<SyllableTarget> TimingPlanner::plan (const std::vector<TokenSyllable
 
     out.resize (sylls.size());
     double cursor = 0.0;
+    double ripple = 0.0;   // durata modificata di una sillaba: sposta tutte le successive
     const bool useNotes = mode == VocalMode::Canto && ! notes.empty();
-    if (useNotes) cursor = notes.back().startBeat + notes.back().lengthBeats;
+    if (useNotes)
+    {
+        cursor = notes.back().startBeat + notes.back().lengthBeats;
+        for (size_t k = 0; k < juce::jmin (notes.size(), sylls.size()); ++k)
+            cursor += juce::jmax (step * 0.5, notes[k].lengthBeats) * (edit (k).lengthScale - 1.0);
+    }
 
     for (size_t k = 0; k < sylls.size(); ++k)
     {
@@ -37,9 +55,11 @@ std::vector<SyllableTarget> TimingPlanner::plan (const std::vector<TokenSyllable
         double off = 0.0;
         if (useNotes && k < notes.size())
         {
-            t.gridBeat = notes[k].startBeat;
-            t.endBeat = notes[k].startBeat + juce::jmax (step * 0.5, notes[k].lengthBeats) * e.lengthScale;
+            const double len = juce::jmax (step * 0.5, notes[k].lengthBeats);
+            t.gridBeat = notes[k].startBeat + ripple;
+            t.endBeat = t.gridBeat + len * e.lengthScale;
             t.noteMidi = notes[k].pitch;
+            ripple += len * (e.lengthScale - 1.0);
         }
         else
         {
@@ -57,7 +77,7 @@ std::vector<SyllableTarget> TimingPlanner::plan (const std::vector<TokenSyllable
             const double legato = mode == VocalMode::Canto ? 1.0 : juce::jlimit (0.1, 1.0, rs.legato);
             t.endBeat = t.gridBeat + off + mySlot * legato * e.lengthScale;
             t.noteMidi = mode == VocalMode::Canto && useNotes ? notes.back().pitch : -1;
-            cursor += slot + step * juce::jmin (sylls[k].pauseSteps, juce::jmax (0, rs.restStepsMax));
+            cursor += slot * e.lengthScale + step * juce::jmin (sylls[k].pauseSteps, juce::jmax (0, rs.restStepsMax));
         }
         if (e.note >= 0) t.noteMidi = e.note;
         t.anchorBeat = t.gridBeat + off + e.shiftBeats;
@@ -76,16 +96,68 @@ std::vector<SyllableTarget> TimingPlanner::plan (const std::vector<TokenSyllable
     return out;
 }
 
+std::vector<SyllableTarget> TimingPlanner::fromNatural (const std::vector<double>& na, const std::vector<double>& ne,
+                                                        const std::vector<SyllableEdit>& edits, double bpm)
+{
+    std::vector<SyllableTarget> out (na.size());
+    const double minGap = 0.05 * juce::jmax (20.0, bpm) / 60.0;
+    double ripple = 0.0;
+    for (size_t k = 0; k < na.size(); ++k)
+    {
+        const auto e = k < edits.size() ? edits[k] : SyllableEdit {};
+        auto& t = out[k];
+        t.gridBeat = na[k] + ripple;
+        t.anchorBeat = t.gridBeat + e.shiftBeats;
+        const double voice = juce::jmax (0.0, (k < ne.size() ? ne[k] : na[k]) - na[k]);
+        t.endBeat = t.anchorBeat + voice * e.lengthScale;
+        t.gainDb = e.gainDb;
+        t.muted = e.muted;
+        t.noteMidi = e.note;
+        const double span = k + 1 < na.size() ? na[k + 1] - na[k] : voice;
+        ripple += span * (e.lengthScale - 1.0);
+        if (k > 0 && t.anchorBeat < out[k - 1].anchorBeat + minGap)
+        {
+            const double d = out[k - 1].anchorBeat + minGap - t.anchorBeat;
+            t.anchorBeat += d; t.endBeat += d;
+        }
+    }
+    return out;
+}
+
 double TimingPlanner::prerollBeats (const std::vector<int64_t>& predicted, const std::vector<TokenSyllable>& sylls,
                                     const std::vector<SyllableTarget>& targets, double bpm)
 {
     if (sylls.empty() || targets.empty() || predicted.empty()) return 0.0;
     const double F = framesPerSecond * 60.0 / juce::jmax (20.0, bpm);
-    double lead = 2.0;
-    for (int i = 0; i < sylls[0].nucleusFirst && i + 1 < (int) predicted.size(); ++i)
-        lead += juce::jmax (1, naturalFrames (predicted[(size_t) i + 1], 1.0f));
-    const double need = lead / F - targets[0].anchorBeat;
+    const double need = onsetFrames (predicted, sylls) / F - targets[0].anchorBeat;
     return need <= 1.0e-9 ? 0.0 : std::ceil (need - 1.0e-9);
+}
+
+double TimingPlanner::onBeatShift (const std::vector<int64_t>& predicted, const std::vector<TokenSyllable>& sylls,
+                                   const std::vector<SyllableTarget>& targets, double bpm, double stepBeats)
+{
+    if (sylls.empty() || targets.empty() || predicted.empty()) return 0.0;
+    const double F = framesPerSecond * 60.0 / juce::jmax (20.0, bpm);
+    const double step = juce::jmax (1.0 / 64.0, stepBeats);
+    const double need = onsetFrames (predicted, sylls) / F - targets[0].anchorBeat;
+    return need <= 1.0e-9 ? 0.0 : std::ceil (need / step - 1.0e-9) * step;
+}
+
+void TimingPlanner::warpMap (const std::vector<int>& vowelFrame, const std::vector<double>& targetFrame, int spf,
+                             std::vector<double>& in, std::vector<double>& out)
+{
+    in = { 0.0 }; out = { 0.0 };
+    for (size_t k = 0; k < vowelFrame.size() && k < targetFrame.size(); ++k)
+    {
+        const double got = vowelFrame[k] * (double) spf, want = targetFrame[k] * spf;
+        const double di = got - in.back(), dout = want - out.back();
+        if (di <= 1.0 || dout <= 1.0) continue;
+        const double ratio = dout / di;
+        if (ratio < 0.75 || ratio > 1.333) continue;       // irraggiungibile senza rovinare il suono: resta com'e'
+        in.push_back (got);
+        out.push_back (want);
+    }
+    if (in.size() < 2) { in.clear(); out.clear(); }
 }
 
 TimedDurations TimingPlanner::durations (const juce::String& ps, const std::vector<int64_t>& pred,
@@ -118,14 +190,16 @@ TimedDurations TimingPlanner::durations (const juce::String& ps, const std::vect
         return sing ? juce::jmin (2, f) : f;
     };
 
-    // ---- inizio: silenzio del modello (2 frame) + attacco naturale della prima sillaba
-    D[0] = 2;
-    int pos = 2;
+    // ---- inizio: silenzio "di rincorsa" naturale del modello (da' energia giusta alla prima sillaba;
+    //      l'eccesso viene tagliato) + attacco naturale della prima sillaba
+    D[0] = juce::jmax ((int64_t) 2, pred[0]);
+    int pos = (int) D[0];
     const float scale0 = edit (0).onsetScale;
     for (int i = 0; i < sylls[0].nucleusFirst; ++i) { D[(size_t) i + 1] = consonantFrames (i, scale0); pos += (int) D[(size_t) i + 1]; }
 
     const double first = (targets[0].anchorBeat - startBeat) * F;
-    r.padSamples = juce::jmax (0.0, (first - pos) * 600.0);
+    // il silenzio iniziale del modello si puo' tagliare: anticipo negativo fino alla sua lunghezza
+    r.padSamples = juce::jmax (-(double) D[0] * 600.0, (first - pos) * 600.0);
     const double padFrames = r.padSamples / 600.0;
 
     r.targetFrame.resize (sylls.size());
@@ -206,7 +280,7 @@ TimedDurations TimingPlanner::durations (const juce::String& ps, const std::vect
         r.endFrame[k] = pos + juce::jlimit (vmin, juce::jmax (vmin, span - pauseTotal), voiceFrames);
         pos += span;
     }
-    D[(size_t) n + 1] = 3;
+    D[(size_t) n + 1] = juce::jmax ((int64_t) 3, pred[(size_t) n + 1]);   // chiusura naturale della frase
 
     r.onsetFrame.resize (sylls.size());
     int acc = (int) D[0];

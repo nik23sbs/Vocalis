@@ -196,15 +196,28 @@ RhythmPage::RhythmPage (VocalisProcessor& p)
     : proc (p),
       division (p.apvts, IDs::division, "Griglia"), bpmSource (p.apvts, IDs::bpmSource, "BPM"),
       playMode (p.apvts, IDs::playMode, "Riproduzione"), loudness (p.apvts, IDs::loudness, "Livello"),
+      attack (p.apvts, IDs::attack, "Attacco della frase"),
       steps (p.apvts, IDs::stepsPerSyl, "Step/sill.", Colours::accent), swing (p.apvts, IDs::swing, "Swing", Colours::accent, "%"),
       legato (p.apvts, IDs::legato, "Legato", Colours::accent, "%"), groove (p.apvts, IDs::grooveAmt, "Groove", Colours::accent2, "%"),
       accents (p.apvts, IDs::accentAmt, "Accenti", Colours::accent2, "%"), bpm (p.apvts, IDs::bpmManual, "BPM man.", Colours::accent2, "", 1),
       grooveView (p)
 {
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &division, &bpmSource, &playMode, &loudness, &steps, &swing, &legato, &groove, &accents, &bpm, &grooveView, &startBar, &loop })
+    attack.box.setTooltip ("Sul battere: la clip (e il WAV) parte esattamente sulla battuta.\n"
+                           "Anticipato: le consonanti iniziali partono prima del battere, cosi' anche la prima vocale cade "
+                           "a tempo; la clip parte 1 quarto prima (in Sync DAW lo gestisce il plugin).");
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &attack, &division, &bpmSource, &playMode, &loudness, &steps, &swing, &legato, &groove, &accents, &bpm, &grooveView, &startBar, &loop })
         addAndMakeVisible (c);
     startBar.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 44, 24);
     startAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (p.apvts, IDs::startBar, startBar);
+    shiftAtt = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (p.apvts, IDs::vocalShift, shift);
+    shift.setTextBoxStyle (juce::Slider::TextBoxLeft, false, 70, 24);
+    shift.textFromValueFunction = [] (double v) { const double s16 = v * 4.0; return (s16 > 0 ? "+" : "") + juce::String (s16, std::abs (s16 - std::round (s16)) < 1e-6 ? 0 : 1) + " /16"; };
+    shift.valueFromTextFunction = [] (const juce::String& t) { return t.retainCharacters ("-0123456789.").getDoubleValue() / 4.0; };
+    shift.setDoubleClickReturnValue (true, 0.0);
+    shift.updateText();
+    shift.setTooltip ("Sposta tutto il vocal rispetto alla griglia (in sedicesimi). Si puo' anche trascinare un punto vuoto "
+                      "della timeline; doppio clic qui o sulla timeline = 0.");
+    addAndMakeVisible (shift);
     loopAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (p.apvts, IDs::loop, loop);
 }
 
@@ -213,7 +226,7 @@ void RhythmPage::refresh()
     const bool manual = (int) proc.apvts.getRawParameterValue (IDs::bpmSource)->load() == 1;
     bpm.setEnabled (manual);
     const bool grid = (int) proc.apvts.getRawParameterValue (IDs::mode)->load() != 0;
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &division, &steps, &swing, &legato, &groove, &accents }) c->setEnabled (grid);
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &attack, &division, &steps, &swing, &legato, &groove, &accents }) c->setEnabled (grid);
     const bool sync = (int) proc.apvts.getRawParameterValue (IDs::playMode)->load() == 0;
     startBar.setEnabled (sync); loop.setEnabled (sync);
     grooveView.repaint();
@@ -227,6 +240,7 @@ void RhythmPage::paint (juce::Graphics& g)
     g.setColour (Colours::textDim);
     g.setFont (juce::FontOptions (11.0f));
     g.drawText ("Dalla battuta", startBar.getX(), startBar.getY() - 15, 120, 14, juce::Justification::left);
+    g.drawText ("Sposta vocal", shift.getX(), shift.getY() - 15, 120, 14, juce::Justification::left);
 }
 
 void RhythmPage::resized()
@@ -252,6 +266,10 @@ void RhythmPage::resized()
     row = r.removeFromTop (28);
     startBar.setBounds (row.removeFromLeft (150));
     loop.setBounds (row.withTrimmedLeft (12));
+    r.removeFromTop (8);
+    row = r.removeFromTop (42);
+    attack.setBounds (row.removeFromLeft (row.getWidth() / 2 + 20).withTrimmedRight (6));
+    shift.setBounds (row.withTrimmedTop (16).withHeight (26));
 }
 
 // ============================================================================ SingPage

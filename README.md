@@ -39,8 +39,11 @@ di un loop, aggiungi gli effetti ed esporta in WAV oppure trascinala nella DAW.
 - **Macro**: Espressivita', Swing/Flow, Calore, Respiro, Doppio/Coro, Spazio.
 - **Nuova grafica "Studio"**: timeline con righello, corsia delle sillabe, piano roll con note,
   curva d'intonazione e forma d'onda.
-- Il vocal parte **un quarto prima** della battuta quando le consonanti iniziali devono anticipare il battere
-  (in Sync DAW lo gestisce il plugin; il WAV esportato ha "_pre1q" nel nome).
+- **Attacco della frase** (Ritmo): *Sul battere* (predefinito) = la clip e il WAV partono esattamente sulla battuta;
+  se le consonanti iniziali non ci stanno, tutta la frase scala di uno step e ogni vocale resta sulla griglia.
+  *Anticipato* = le consonanti partono prima del battere e la clip inizia 1 quarto prima (il WAV ha "_pre1q" nel nome).
+- **Sposta vocal**: trascina un punto vuoto della timeline (o usa Ritmo > Sposta vocal) per spostare tutta la frase
+  a passi di 1/32; doppio clic su un punto vuoto = rimette a zero.
 
 ## Come si usa
 
@@ -49,7 +52,7 @@ di un loop, aggiungi gli effetti ed esporta in WAV oppure trascinala nella DAW.
 | **Barra in alto** | Modalita' Parlato / Rap / Canto, anteprima, posizione e BPM, *Esporta WAV*, *Trascina nella DAW*. |
 | **Voci** | Quattro voci (A-D) e la sfera per miscelarle; variante; motore *Neurale* o *Robot* (eSpeak); timbro (velocita', pitch, intonazione, formanti, robotizza). |
 | **Testo** | Virgole e punti diventano pause a tempo. Lingua e *Dizionario* di pronuncia. |
-| **Timeline** | Clic = seleziona; trascina = sposta (1/32, Alt = libero); bordo destro = durata; Shift = intonazione; rotella = volume; doppio clic = muta; tasto destro = menu. Nel piano roll trascina una nota in su/giu'. Trascina qui un file MIDI. |
+| **Timeline** | Clic = seleziona; trascina = sposta (1/32, Alt = libero); bordo destro = durata (le sillabe dopo si spostano); Shift = intonazione; rotella = volume; doppio clic = muta; tasto destro = menu. Nel piano roll trascina una nota (su/giu' = nota, destra/sinistra = posizione). Punto vuoto = sposta tutto il vocal. Trascina qui un file MIDI. Vale in Parlato, Rap e Canto. |
 | **Macro** | Sei manopole che agiscono su piu' parametri insieme (al 50% Espressivita' e Coro sono neutre). |
 | **Inspector** | *Sillaba* (modifica della selezione + pronuncia), *Ritmo* (griglia, swing, legato, groove da sample, riproduzione), *Canto* (melodia, vibrato, glide, tonalita', armonie, doppio), *Effetti*. |
 

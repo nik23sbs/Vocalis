@@ -17,6 +17,8 @@ namespace IDs
     inline constexpr const char* orbY = "orbY";            // 0 = A/B, 1 = C/D
     inline constexpr const char* variant = "variant";      // seme delle varianti
     inline constexpr const char* mode = "mode";            // Parlato / Rap / Canto
+    inline constexpr const char* attack = "attack";        // Sul battere / Anticipato
+    inline constexpr const char* vocalShift = "vocalShift"; // sposta tutto il vocal (quarti, a 1/32)
     inline constexpr const char* robotVariant = "robotVariant";
     inline constexpr const char* language = "language";
     inline constexpr const char* pitch = "pitch";

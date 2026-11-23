@@ -19,6 +19,7 @@ public:
     void resized() override;
 
     /** Solo test/istantanee: seleziona una sillaba e mostra una scheda dell'inspector. */
+    vocalis::Timeline& getTimelineForTest() { return timeline; }
     void selectForSnapshot (int syllable, int tab) { timeline.setSelected (syllable); inspector.setSelected (syllable); inspector.showTab (tab); }
 
 private:

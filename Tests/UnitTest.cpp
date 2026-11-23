@@ -180,6 +180,76 @@ static void testTimingEdgeCases()
         CHECK (zeroMarks, "Canto: accenti e spazi senza durata");
     }
 
+    // durata: allungare una sillaba sposta in avanti le successive (e accorciarla le anticipa)
+    {
+        std::vector<SyllableEdit> le (2); le[1].lengthScale = 2.0;
+        auto lt = TimingPlanner::plan (sy, rs, {}, le, VocalMode::Rap, {});
+        auto l0 = TimingPlanner::plan (sy, rs, {}, {}, VocalMode::Rap, {});
+        CHECK (std::abs ((lt[2].anchorBeat - l0[2].anchorBeat) - rs.stepBeats) < 1e-9, "durata x2: la sillaba dopo arriva uno step piu' tardi");
+        CHECK (std::abs ((lt[1].endBeat - lt[1].anchorBeat) - 2.0 * (l0[1].endBeat - l0[1].anchorBeat)) < 1e-9, "durata x2: la sillaba dura il doppio");
+        le[1].lengthScale = 0.5;
+        auto ls = TimingPlanner::plan (sy, rs, {}, le, VocalMode::Rap, {});
+        CHECK (ls[2].anchorBeat < l0[2].anchorBeat - 1e-9, "durata x0,5: la sillaba dopo arriva prima");
+        // con la melodia: le note dopo si spostano anche loro
+        std::vector<NoteEvent> mel { { 0.0, 0.5, 60 }, { 0.5, 0.5, 62 }, { 1.0, 0.5, 64 } };
+        le[1].lengthScale = 2.0;
+        auto lm = TimingPlanner::plan (sy, rs, {}, le, VocalMode::Canto, mel);
+        CHECK (std::abs (lm[2].anchorBeat - 1.5) < 1e-9, "Canto: nota allungata sposta le note dopo");
+    }
+
+    // Parlato: tempi naturali piu' le modifiche
+    {
+        const std::vector<double> na { 0.2, 0.6, 0.9, 1.5 }, ne { 0.5, 0.85, 1.4, 1.9 };
+        auto p0 = TimingPlanner::fromNatural (na, ne, {}, 120);
+        CHECK (p0.size() == 4 && std::abs (p0[2].anchorBeat - 0.9) < 1e-9 && std::abs (p0[2].endBeat - 1.4) < 1e-9, "Parlato senza modifiche = tempi naturali");
+        std::vector<SyllableEdit> pe (4); pe[1].shiftBeats = 0.1; pe[2].lengthScale = 2.0;
+        auto p1 = TimingPlanner::fromNatural (na, ne, pe, 120);
+        CHECK (std::abs (p1[1].anchorBeat - 0.7) < 1e-9 && std::abs (p1[0].anchorBeat - 0.2) < 1e-9, "Parlato: spostamento di una sillaba");
+        CHECK (std::abs (p1[3].anchorBeat - (1.5 + 0.6)) < 1e-9, "Parlato: durata x2 sposta le successive (0,6 quarti)");
+        CHECK (std::abs (p1[2].endBeat - (0.9 + 2.0 * 0.5)) < 1e-9, "Parlato: durata x2 allunga la voce");
+    }
+
+    // il silenzio iniziale e finale del modello restano naturali (danno la "rincorsa" alla prima sillaba);
+    // l'eccesso si taglia con un anticipo negativo
+    {
+        const juce::String rps (juce::CharPointer_UTF8 ("kwˈesta"));
+        auto rsy = TokenSyllables::build (rps);
+        auto rpred = fakePredicted (rps); rpred[0] = 11; rpred.back() = 7;
+        RhythmSettings rrs; rrs.bpm = 90;
+        auto rt = TimingPlanner::plan (rsy, rrs, {}, {}, VocalMode::Rap, {});
+        auto rd = TimingPlanner::durations (rps, rpred, rsy, rt, {}, rrs.bpm, -1.0);
+        CHECK (rd.durations.front() == 11 && rd.durations.back() == 7, "inizio e fine frase naturali");
+        const double vowelAt = cumFrames (rd.durations, rsy[0].nucleusFirst) * 600.0 + rd.padSamples;
+        CHECK (std::abs (vowelAt - (rt[0].anchorBeat + 1.0) * (40.0 * 60.0 / 90.0) * 600.0) <= 300.0, "prima vocale comunque a tempo (silenzio tagliato)");
+    }
+
+    // micro-allineamento: mai oltre +-25% su un tratto; un target irraggiungibile viene saltato
+    {
+        std::vector<double> in, out;
+        TimingPlanner::warpMap ({ 6, 10, 20, 30 }, { 6.0, 10.3, 19.8, 30.0 }, 600, in, out);
+        CHECK (in.size() == 5 && std::abs (out[2] - 10.3 * 600) < 1e-6, "warp normale: tutti i punti");
+        TimingPlanner::warpMap ({ 6, 9, 20, 30 }, { 6.0, 6.7, 19.8, 30.0 }, 600, in, out);   // 'sta' impossibile (3 frame in 0,7)
+        bool ok = true;
+        for (size_t i = 1; i < in.size(); ++i) { const double r = (out[i] - out[i - 1]) / (in[i] - in[i - 1]); ok &= r > 0.74 && r < 1.34; }
+        CHECK (ok, "warp: nessun tratto compresso o stirato oltre il 25%");
+        CHECK (std::abs (out.back() - 30.0 * 600) < 1e-6, "warp: i target raggiungibili restano esatti");
+    }
+
+    // "sul battere": tutta la frase si sposta di step interi se le consonanti iniziali non ci stanno
+    {
+        const juce::String ops (juce::CharPointer_UTF8 ("kwˈesta ˈɛ"));
+        auto osy = TokenSyllables::build (ops);
+        RhythmSettings ors; ors.bpm = 90; ors.stepBeats = 0.25;
+        auto ot = TimingPlanner::plan (osy, ors, {}, {}, VocalMode::Rap, {});
+        auto opred = fakePredicted (ops);   // k2 w2 ˈ0 -> 2+4 = 6 frame di attacco = 150 ms
+        const double sh = TimingPlanner::onBeatShift (opred, osy, ot, ors.bpm, ors.stepBeats);
+        CHECK (std::abs (sh - 0.25) < 1e-9, "sul battere: frase spostata di 1 step (150 ms di attacco a 90 BPM), era " << sh);
+        const juce::String vps (juce::CharPointer_UTF8 ("ˈɛ la"));
+        auto vsy = TokenSyllables::build (vps);
+        auto vt = TimingPlanner::plan (vsy, ors, {}, {}, VocalMode::Rap, {});
+        CHECK (TimingPlanner::onBeatShift (fakePredicted (vps), vsy, vt, ors.bpm, ors.stepBeats) < 0.125, "sul battere: frase che inizia con vocale, nessuno spostamento di step");
+    }
+
     // Parlato: nessun target (tempi naturali)
     CHECK (TimingPlanner::plan (sy, rs, {}, {}, VocalMode::Parlato, {}).empty(), "Parlato senza griglia");
 }

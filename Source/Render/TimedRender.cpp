@@ -33,9 +33,12 @@ namespace
         std::vector<float> audio;
         void mixAt (int pos, const std::vector<float>& v, float gain)
         {
-            if (pos < 0) return;
-            if ((size_t) pos + v.size() > audio.size()) audio.resize ((size_t) pos + v.size(), 0.0f);
-            for (size_t i = 0; i < v.size(); ++i) audio[(size_t) pos + i] += v[i] * gain;
+            // pos negativo: si taglia l'inizio (il silenzio iniziale del modello)
+            const size_t skip = pos < 0 ? (size_t) -pos : 0;
+            if (skip >= v.size()) return;
+            const size_t at = pos < 0 ? 0 : (size_t) pos;
+            if (at + v.size() - skip > audio.size()) audio.resize (at + v.size() - skip, 0.0f);
+            for (size_t i = skip; i < v.size(); ++i) audio[at + i - skip] += v[i] * gain;
         }
     };
 
@@ -139,7 +142,6 @@ bool Renderer::renderTimed (const RenderRequest& r, RenderedClip& clip)
     const auto& v = r.voice;
     const double bpm = juce::jmax (20.0, r.rhythm.bpm);
     const double samplesPerBeat = 60.0 / bpm * modelRate;
-    const bool timedMode = r.mode != VocalMode::Parlato;
     juce::String err;
 
     // ---- testo -> blocchi di fonemi -> sillabe
@@ -174,43 +176,87 @@ bool Renderer::renderTimed (const RenderRequest& r, RenderedClip& clip)
         }
 
     // ---- 2) dove cade ogni vocale
-    auto targets = TimingPlanner::plan (all, r.rhythm, r.groove, r.edits, r.mode, r.notes);
-    const double preroll = timedMode ? TimingPlanner::prerollBeats (chunks[0].natural->durations, chunks[0].sylls,
-                                                                    std::vector<SyllableTarget> (targets.begin(), targets.begin() + (long) chunks[0].sylls.size()), bpm)
-                                     : 0.0;
-    const double startBeat = -preroll;
-
-    double cursor = 0.0;   // Parlato: blocchi uno dopo l'altro con 120 ms di pausa
-    for (auto& ch : chunks)
+    const bool parlato = r.mode == VocalMode::Parlato;
+    std::vector<SyllableTarget> targets;
+    if (parlato)
     {
-        if (timedMode)
+        // Parlato: tempi naturali (blocchi uno dopo l'altro con 120 ms di pausa) + spostamenti e durate delle sillabe
+        std::vector<double> na, ne;
+        double cur = 0.0;
+        for (auto& ch : chunks)
         {
-            std::vector<SyllableTarget> t (targets.begin() + (long) ch.firstSyl, targets.begin() + (long) (ch.firstSyl + ch.sylls.size()));
-            std::vector<SyllableEdit> e;
-            for (size_t k = 0; k < ch.sylls.size(); ++k)
-                e.push_back (ch.firstSyl + k < r.edits.size() ? r.edits[ch.firstSyl + k] : SyllableEdit {});
-            ch.timing = TimingPlanner::durations (ch.ps, ch.natural->durations, ch.sylls, t, e, bpm, startBeat, r.mode);
-            ch.durations = ch.timing.durations;
-            ch.offset = ch.timing.padSamples;
-            // vocali realizzate (frame interi) -> posizione esatta (punti strettamente crescenti)
-            ch.warpIn = { 0.0 }; ch.warpOut = { 0.0 };
+            const auto& d = ch.natural->durations;
+            std::vector<double> cum (d.size() + 1, 0.0);
+            for (size_t i = 0; i < d.size(); ++i) cum[i + 1] = cum[i] + (double) d[i];
             for (size_t k = 0; k < ch.sylls.size(); ++k)
             {
-                const double got = ch.timing.vowelFrame[k] * (double) spf, want = ch.timing.targetFrame[k] * spf;
-                if (got > ch.warpIn.back() + 1.0 && want > ch.warpOut.back() + 1.0)
-                {
-                    ch.warpIn.push_back (got);
-                    ch.warpOut.push_back (want);
-                }
+                const int endTok = k + 1 < ch.sylls.size() ? ch.sylls[k + 1].firstToken : ch.ps.length();
+                na.push_back ((cur + cum[(size_t) ch.sylls[k].nucleusFirst + 1] * spf) / samplesPerBeat);
+                ne.push_back ((cur + cum[(size_t) endTok + 1] * spf) / samplesPerBeat);
             }
-            if (ch.warpIn.size() < 2) { ch.warpIn.clear(); ch.warpOut.clear(); }
+            cur += (double) ch.natural->audio.size() + 0.12 * modelRate;
         }
-        else
+        targets = TimingPlanner::fromNatural (na, ne, r.edits, bpm);
+    }
+    else
+        targets = TimingPlanner::plan (all, r.rhythm, r.groove, r.edits, r.mode, r.notes);
+
+    const std::vector<SyllableTarget> firstTargets (targets.begin(), targets.begin() + (long) chunks[0].sylls.size());
+    double preroll = 0.0;
+    if (! parlato && r.anticipate)
+        preroll = TimingPlanner::prerollBeats (chunks[0].natural->durations, chunks[0].sylls, firstTargets, bpm);
+    else if (! parlato && ! targets.empty())
+    {
+        // "sul battere": la clip parte esattamente sulla battuta. Se le consonanti della prima sillaba non ci stanno,
+        // tutta la frase si sposta di step interi (ogni vocale resta sulla griglia). Con una melodia le note non si
+        // spostano: solo la prima vocale arriva un po' dopo.
+        const double shift = TimingPlanner::onBeatShift (chunks[0].natural->durations, chunks[0].sylls, firstTargets, bpm, r.rhythm.stepBeats);
+        if (shift > 0.0)
         {
-            ch.durations = ch.natural->durations;
-            ch.offset = cursor;
-            cursor += (double) ch.natural->audio.size() + 0.12 * modelRate;
+            if (r.mode == VocalMode::Canto && ! r.notes.empty())
+            {
+                double lead = 0.0;
+                for (int i = 0; i < chunks[0].sylls[0].nucleusFirst; ++i)
+                    lead += (double) juce::jmax ((int64_t) 1, chunks[0].natural->durations[(size_t) i + 1]);
+                const double d = lead / TimingPlanner::framesPerSecond * bpm / 60.0 - targets[0].anchorBeat;
+                if (d > 0.0) { targets[0].anchorBeat += d; targets[0].endBeat += d; }
+            }
+            else
+                for (auto& t : targets) { t.anchorBeat += shift; t.gridBeat += shift; t.endBeat += shift; }
         }
+    }
+
+    // spostamento di tutto il vocal deciso dall'utente (dopo l'aggiustamento automatico, cosi' sposta sempre di
+    // quanto trascinato); se lo porta prima dell'inizio della clip "sul battere", si ferma alla battuta
+    if (std::abs (r.vocalShiftBeats) > 1.0e-9 && ! targets.empty())
+    {
+        double us = r.vocalShiftBeats;
+        if (! parlato && ! r.anticipate)
+        {
+            std::vector<SyllableTarget> moved (firstTargets.size());
+            for (size_t i = 0; i < moved.size(); ++i) { moved[i] = targets[i]; moved[i].anchorBeat += us; }
+            us += TimingPlanner::onBeatShift (chunks[0].natural->durations, chunks[0].sylls, moved, bpm, r.rhythm.stepBeats);
+        }
+        for (auto& t : targets) { t.anchorBeat += us; t.gridBeat += us; t.endBeat += us; }
+        if (! parlato && r.anticipate)
+        {
+            const std::vector<SyllableTarget> ft (targets.begin(), targets.begin() + (long) chunks[0].sylls.size());
+            preroll = TimingPlanner::prerollBeats (chunks[0].natural->durations, chunks[0].sylls, ft, bpm);
+        }
+    }
+    const double startBeat = -preroll;
+
+    for (auto& ch : chunks)
+    {
+        std::vector<SyllableTarget> t (targets.begin() + (long) ch.firstSyl, targets.begin() + (long) (ch.firstSyl + ch.sylls.size()));
+        std::vector<SyllableEdit> e;
+        for (size_t k = 0; k < ch.sylls.size(); ++k)
+            e.push_back (ch.firstSyl + k < r.edits.size() ? r.edits[ch.firstSyl + k] : SyllableEdit {});
+        ch.timing = TimingPlanner::durations (ch.ps, ch.natural->durations, ch.sylls, t, e, bpm, startBeat, r.mode);
+        ch.durations = ch.timing.durations;
+        ch.offset = ch.timing.padSamples;
+        // vocali realizzate (frame interi) -> posizione esatta, senza mai stravolgere il suono
+        TimingPlanner::warpMap (ch.timing.vowelFrame, ch.timing.targetFrame, spf, ch.warpIn, ch.warpOut);
     }
 
     // ---- 3) passata a tempo (o naturale nel Parlato): audio + F0 naturale con queste durate
@@ -234,7 +280,8 @@ bool Renderer::renderTimed (const RenderRequest& r, RenderedClip& clip)
         auto& ch = chunks[c];
         KokoroPass p;
         p.useDur = true; p.durations = ch.durations;
-        auto timed = timedMode ? runCached (ch.ps, v.mix, v.speed, v.variant, p, err) : ch.natural;
+        // stesse durate della passata naturale (Parlato senza modifiche): nessuna passata in piu'
+        auto timed = ch.durations == ch.natural->durations ? ch.natural : runCached (ch.ps, v.mix, v.speed, v.variant, p, err);
         if (timed == nullptr) { clip.warning = err; return false; }
         ch.f0Natural = timed->f0;
         if (r.mode == VocalMode::Canto && ! timed->n.empty())
@@ -290,7 +337,7 @@ bool Renderer::renderTimed (const RenderRequest& r, RenderedClip& clip)
             in.vowel = (int) std::lround (mapped (tokenSample (s.nucleusFirst)));
             const int endTok = k + 1 < ch.sylls.size() ? ch.sylls[k + 1].firstToken : ch.ps.length();
             in.nextOnset = (int) std::lround (mapped (tokenSample (endTok)));
-            in.end = timedMode ? (int) std::lround (mapped (ch.timing.endFrame[k] * (double) spf)) : in.nextOnset;
+            in.end = (int) std::lround (mapped (ch.timing.endFrame[k] * (double) spf));
             in.end = juce::jlimit (in.vowel, juce::jmax (in.vowel, in.nextOnset), in.end);
             in.label = s.label;
             const size_t g = ch.firstSyl + k;
@@ -446,7 +493,7 @@ bool Renderer::renderTimed (const RenderRequest& r, RenderedClip& clip)
                 const float t = juce::jmin (1.0f, (float) (i - a) / ramp, (float) (b - i) / ramp);
                 env[(size_t) i] *= 1.0f + (g - 1.0f) * juce::jmax (0.0f, t);
             }
-        if (timedMode && in.end + release < in.nextOnset)
+        if (in.end + release < in.nextOnset)
             for (int i = in.end; i < b; ++i)
                 env[(size_t) i] *= juce::jmax (0.0f, 1.0f - (float) (i - in.end) / release);
     }

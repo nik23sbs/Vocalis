@@ -146,6 +146,7 @@ int main()
     if (v3)
     {
         setParam (p, IDs::mode, 1);   // Rap
+        setParam (p, IDs::attack, 1); // anticipato: prova anche la riproduzione con l'anticipo
         p.setText ("Questa voce cade a tempo sulla griglia.");
         p.renderBlocking();
         auto c = p.getClip();
@@ -171,6 +172,17 @@ int main()
             check (e3 < 2.0e-3, "v3: sync DAW con anticipo, uscita = clip (canale destro)");
             setParam (p, IDs::startBar, 1); setParam (p, IDs::loop, 1);
         }
+
+        // attacco: "Sul battere" (predefinito) = nessun anticipo, la clip parte sulla battuta
+        setParam (p, IDs::attack, 0);
+        p.renderBlocking();
+        if (auto a = p.getClip(); a != nullptr)
+            check (a->prerollBeats == 0.0 && a->markers.front().start >= 0, "attacco sul battere: nessun anticipo");
+        setParam (p, IDs::attack, 1);
+        p.renderBlocking();
+        if (auto a = p.getClip(); a != nullptr)
+            check (a->prerollBeats >= 1.0, "attacco anticipato: la clip parte prima (consonanti prima del battere)");
+        setParam (p, IDs::attack, 0);
 
         // armonie: i canali si separano
         setParam (p, IDs::harm1, 2); setParam (p, IDs::harmWidth, 100);
@@ -218,6 +230,24 @@ int main()
         setParam (p, IDs::mode, 1);
     }
 
+    // motore Robot (catena v2): anche qui lo spostamento di tutto il vocal deve funzionare
+    {
+        setParam (p, IDs::engine, 1);
+        p.setText ("Prova robot a tempo.");
+        p.resetEdits();
+        p.renderBlocking();
+        auto a = p.getClip();
+        setParam (p, IDs::vocalShift, 0.5f);
+        p.renderBlocking();
+        auto b = p.getClip();
+        const double spbR = 60.0 / ph.bpm * sr;
+        const double mv = a != nullptr && b != nullptr && ! a->markers.empty() && ! b->markers.empty()
+                            ? (b->markers[0].nucleus - a->markers[0].nucleus) / spbR : -1.0;
+        check (std::abs (mv - 0.5) < 0.02, ("robot: spostamento di tutto il vocal (" + juce::String (mv, 3) + " quarti)").toRawUTF8());
+        setParam (p, IDs::vocalShift, 0.0f);
+        setParam (p, IDs::engine, 0);
+    }
+
     // cattura MIDI dalla DAW: note suonate mentre il trasporto va
     {
         p.startMidiCapture();
@@ -262,6 +292,74 @@ int main()
         auto e = p2.getEdit (2);
         check (e.note == 67 && std::abs (e.onsetScale - 0.5f) < 1e-4f && e.vibrato && e.whisper && e.adlib && e.glide, "stato: modifiche v3 ripristinate");
         check (p2.getMelody().size() == p.getMelody().size(), "stato: melodia ripristinata");
+    }
+
+    // --- Interazioni con la timeline, come le fa l'utente (mouse simulato) -> l'audio rigenerato deve cambiare
+    if (v3 && juce::SystemStats::getEnvironmentVariable ("VOCALIS_UI_TESTS", "1") == "1")
+    {
+        std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+        ed->setSize (1280, 800);
+        auto& tl = dynamic_cast<VocalisEditor&> (*ed).getTimelineForTest();
+        auto src = juce::Desktop::getInstance().getMainMouseSource();
+        auto ev = [&] (juce::Point<float> pos, juce::Point<float> down, bool dragged) {
+            return juce::MouseEvent (src, pos, juce::ModifierKeys::leftButtonModifier, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, &tl, &tl,
+                                     juce::Time::getCurrentTime(), down, juce::Time::getCurrentTime(), 1, dragged); };
+        auto dragFrom = [&] (juce::Point<float> a, juce::Point<float> delta) {
+            tl.mouseDown (ev (a, a, false));
+            tl.mouseDrag (ev (a + delta * 0.5f, a, true));
+            tl.mouseDrag (ev (a + delta, a, true));
+            tl.mouseUp (ev (a + delta, a, true)); };
+        const double spbClip = 60.0 / ph.bpm * sr;
+        auto nucleusOf = [&] (int k) { auto c = p.getClip(); return c != nullptr && k < (int) c->markers.size() ? c->markers[(size_t) k].nucleus : -1; };
+        auto render = [&] { p.renderBlocking(); tl.setClip (p.getClip()); };
+
+        for (int mode : { 1, 0, 2 })       // Rap, Parlato, Canto
+        {
+            const char* mname = mode == 0 ? "Parlato" : mode == 1 ? "Rap" : "Canto";
+            setParam (p, IDs::mode, (float) mode);
+            p.setMelody ({});
+            p.setText ("Questa voce cade a tempo sulla griglia.");
+            p.resetEdits();
+            render();
+            const int k = 3;
+            const int before = nucleusOf (k), nextBefore = nucleusOf (k + 1);
+            const float px = (float) (0.5 / tl.beatsPerPixelForTest());          // mezzo quarto = 2 sedicesimi
+            dragFrom (tl.blockCentreForTest (k), { px, 0.0f });
+            render();
+            const double moved = (nucleusOf (k) - before) / spbClip;
+            check (std::abs (moved - 0.5) < 0.06, (juce::String ("timeline ") + mname + ": sillaba trascinata di 2/16 si sposta (" + juce::String (moved, 3) + " quarti)").toRawUTF8());
+
+            p.resetEdits(); render();
+            dragFrom (tl.noteCentreForTest (k), { px, 0.0f });
+            render();
+            const double movedN = (nucleusOf (k) - before) / spbClip;
+            check (std::abs (movedN - 0.5) < 0.06, (juce::String ("timeline ") + mname + ": nota trascinata in orizzontale sposta la sillaba (" + juce::String (movedN, 3) + ")").toRawUTF8());
+
+            p.resetEdits(); render();
+            auto e = tl.blockRightEdgeForTest (k);
+            const float w = tl.blockRightEdgeForTest (k).x - tl.blockCentreForTest (k).x;
+            dragFrom (e, { 2.0f * w + 2.0f, 0.0f });
+            render();
+            const double nextMoved = (nucleusOf (k + 1) - nextBefore) / spbClip;
+            const bool onGrid = mode == 0 || std::abs (nextMoved * 8.0 - std::round (nextMoved * 8.0)) < 0.05;
+            check (nextMoved > 0.05 && onGrid, (juce::String ("timeline ") + mname + ": sillaba allungata dal bordo -> la successiva arriva dopo (" + juce::String (nextMoved, 3) + ")").toRawUTF8());
+        }
+        // tutto il vocal: trascinando un punto vuoto del piano roll si sposta l'intera frase
+        setParam (p, IDs::mode, 1);
+        p.resetEdits(); render();
+        {
+            const int a0 = nucleusOf (0), a5 = nucleusOf (5);
+            const float px = (float) (0.5 / tl.beatsPerPixelForTest());
+            auto empty = tl.emptyRollPointForTest();
+            dragFrom (empty, { px, 0.0f });
+            render();
+            const double m0 = (nucleusOf (0) - a0) / spbClip, m5 = (nucleusOf (5) - a5) / spbClip;
+            check (std::abs (m0 - 0.5) < 0.06 && std::abs (m5 - 0.5) < 0.06,
+                   ("timeline: trascinando il vocal si sposta tutta la frase (" + juce::String (m0, 3) + ", " + juce::String (m5, 3) + ")").toRawUTF8());
+            setParam (p, IDs::vocalShift, 0);
+        }
+        p.resetEdits();
+        setParam (p, IDs::mode, 1);
     }
 
     // istantanea dell'interfaccia (VOCALIS_SNAPSHOT=file.png), con una sillaba selezionata

@@ -34,6 +34,8 @@ struct RenderRequest
     float vibratoCents = 0.0f, glideMs = 60.0f, expressivity = 0.3f;
     HarmonySettings harmony;
     float breath = 0.0f;               // respiri prima delle frasi (0..1)
+    double vocalShiftBeats = 0.0;      // sposta tutta la frase (quarti)
+    bool anticipate = false;           // true: le consonanti iniziali partono prima del battere (clip con anticipo)
 
     juce::String text;
     VoiceSettings voice;

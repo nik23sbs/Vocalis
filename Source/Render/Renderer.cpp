@@ -226,6 +226,19 @@ RenderedClip::Ptr Renderer::renderLegacy (const RenderRequest& r, RenderedClip::
         clip->markers.push_back (m);
     }
 
+    // spostamento di tutto il vocal (solo in avanti: la clip non puo' partire prima della battuta)
+    if (r.vocalShiftBeats > 1.0e-9)
+    {
+        const int sh = (int) std::lround (r.vocalShiftBeats * 60.0 / r.rhythm.bpm * r.targetSampleRate);
+        juce::AudioBuffer<float> moved (1, clip->audio.getNumSamples() + sh);
+        moved.clear();
+        moved.copyFrom (0, sh, clip->audio, 0, 0, clip->audio.getNumSamples());
+        clip->audio = std::move (moved);
+        for (auto& m : clip->markers) { m.start += sh; m.end += sh; m.nucleus += sh; m.gridBeat += r.vocalShiftBeats; }
+        const double bar = juce::jmax (1, r.rhythm.beatsPerBar);
+        clip->lengthBeats = std::ceil ((clip->lengthBeats + r.vocalShiftBeats) / bar - 1.0e-6) * bar;
+    }
+
     // ---- 6) livello: loudness (LUFS) o picco a -3 dBFS
     if (r.loudnessLufs < -0.5)
         // la clip e' mono ma suona su due canali: in BS.1770 vale +3 dB rispetto alla misura mono

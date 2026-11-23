@@ -44,6 +44,11 @@ public:
                                              const GrooveTemplate& groove, const std::vector<SyllableEdit>& edits,
                                              VocalMode mode, const std::vector<NoteEvent>& notes);
 
+    /** Parlato: i tempi sono quelli naturali (vocali in naturalAnchor, fine voce in naturalEnd, in quarti) e le
+        modifiche li spostano: shiftBeats sposta la sillaba, lengthScale ne cambia la durata spostando le successive. */
+    static std::vector<SyllableTarget> fromNatural (const std::vector<double>& naturalAnchor, const std::vector<double>& naturalEnd,
+                                                    const std::vector<SyllableEdit>& edits, double bpm);
+
     /** Converte i target (in quarti, clip che inizia a startBeat) in durate per il modello.
         predicted = durate naturali della prima passata; le consonanti le conservano (x onsetScale), le vocali
         prendono il resto; l'errore di arrotondamento al frame viene diffuso sulle sillabe seguenti. */
@@ -55,6 +60,16 @@ public:
     /** Anticipo minimo (in quarti, multiplo di 1) perche' le consonanti iniziali stiano prima della prima vocale. */
     static double prerollBeats (const std::vector<int64_t>& predicted, const std::vector<TokenSyllable>& sylls,
                                 const std::vector<SyllableTarget>& targets, double bpm);
+
+    /** Mappa del micro-allineamento (campioni del modello): porta le vocali realizzate sui target, ma senza mai
+        comprimere o stirare un tratto oltre il 25% (un target irraggiungibile resta un po' in ritardo). */
+    static void warpMap (const std::vector<int>& vowelFrame, const std::vector<double>& targetFrame, int samplesPerFrame,
+                         std::vector<double>& in, std::vector<double>& out);
+
+    /** "Sul battere": di quanto (in quarti, multiplo dello step) spostare tutta la frase perche' le consonanti della
+        prima sillaba stiano dopo l'inizio della clip. 0 se ci stanno gia'. */
+    static double onBeatShift (const std::vector<int64_t>& predicted, const std::vector<TokenSyllable>& sylls,
+                               const std::vector<SyllableTarget>& targets, double bpm, double stepBeats);
 
     static constexpr double framesPerSecond = 40.0;   // 24000 / 600
 };
